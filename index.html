@@ -91,6 +91,22 @@ details p{color:var(--ink-2);max-width:62ch}
 .scanner video{width:100%;height:100%;object-fit:cover;display:block}
 .scanner .frame{position:absolute;inset:17%;border:3px solid #F2B544;border-radius:14px;box-shadow:0 0 0 999px rgba(5,9,15,.38);pointer-events:none}
 .scanner .hint{position:absolute;left:12px;right:12px;bottom:12px;margin:0;text-align:center;color:#E6ECF4;font-size:15px;text-shadow:0 1px 3px #000}
+.beam{border:1px solid var(--line);border-radius:12px;padding:14px 14px 10px;margin:16px 0;background:var(--surface)}
+.beam h2{margin:0 0 4px}
+.beam .sub{color:var(--ink-2);font-size:15px;margin:0}
+.stage{position:relative;width:100%;aspect-ratio:1/1;background:#FFFFFF;border-radius:6px;display:grid;place-items:center;overflow:hidden;box-shadow:0 0 0 1px var(--line);margin:12px 0 0;transition:box-shadow .4s ease}
+.stage.live{box-shadow:0 0 0 1px var(--accent),0 0 40px 4px rgba(242,181,68,.42)}
+.stage canvas{image-rendering:pixelated;image-rendering:crisp-edges;display:block}
+.stage:fullscreen{border-radius:0;width:100vw;height:100vh;aspect-ratio:auto;box-shadow:none}
+.stage:-webkit-full-screen{border-radius:0;width:100vw;height:100vh;box-shadow:none}
+.settings{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:2px 0 8px}
+.settings label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--ink-2);min-width:0}
+.beamstats{font-size:14px;color:var(--ink-2);font-variant-numeric:tabular-nums;margin:6px 0 0}
+.rxbeam{margin:4px 0 8px}
+.meter-head{display:flex;justify-content:space-between;font-size:14px;color:var(--ink-2);margin:10px 0 0}
+.meter-head b{color:var(--ink);font-weight:640;font-variant-numeric:tabular-nums}
+.meter.col i{background:var(--ink-2)}
+@media (prefers-reduced-motion: reduce){.stage{transition:none}}
 .vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 @media (prefers-reduced-motion: reduce){.meter i{transition:none}}
 </style>
@@ -123,7 +139,10 @@ details p{color:var(--ink-2);max-width:62ch}
           <option value="604800000">7 days</option>
         </select>
       </label>
-      <button class="btn" id="createBtn" disabled>Create code</button>
+      <div class="row">
+        <button class="btn" id="createBtn" disabled>Create code</button>
+        <button class="btn quiet" id="beamBtn" disabled>Send by QR animation</button>
+      </div>
       <p class="status" id="sendStatus" aria-live="polite"></p>
       <div class="meter" id="sendMeter" hidden><i id="sendBar"></i></div>
 
@@ -142,6 +161,31 @@ details p{color:var(--ink-2);max-width:62ch}
         </div>
       </div>
 
+      <section class="beam" id="beam" hidden aria-labelledby="beamH">
+        <h2 id="beamH">Send by QR animation</h2>
+        <p class="sub">No internet needed. On the other phone, open Codedrop, tap Receive, then Scan QR, and point it at this screen until the file arrives.</p>
+        <div class="stage" id="stage"><canvas id="beamCanvas" role="img" aria-label="Animated QR code carrying the file"></canvas></div>
+        <div class="row">
+          <button class="btn grow" id="beamStart">Start</button>
+          <button class="btn quiet" id="beamFs">Full screen</button>
+          <button class="btn quiet" id="beamClose">Close</button>
+        </div>
+        <div class="settings">
+          <label>Code density
+            <select id="beamDensity">
+              <option value="250">Sparse, 250 B</option>
+              <option value="500" selected>Balanced, 500 B</option>
+              <option value="800">Dense, 800 B</option>
+              <option value="1100">Very dense, 1,100 B</option>
+            </select>
+          </label>
+          <label>Frames per second
+            <select id="beamFps"><option>6</option><option>10</option><option selected>12</option><option>15</option><option>20</option></select>
+          </label>
+        </div>
+        <p class="beamstats" id="beamStats"></p>
+      </section>
+
       <section id="mine" hidden aria-labelledby="mineH">
         <h2 id="mineH">Codes made on this phone</h2>
         <ul class="list" id="mineList"></ul>
@@ -152,6 +196,7 @@ details p{color:var(--ink-2);max-width:62ch}
       <summary>How it works</summary>
       <p>The file is encrypted on your phone with AES-256-GCM before it’s uploaded. The key is derived from the code (PBKDF2, 250,000 rounds) and the code is never uploaded, so the storage only holds scrambled data. The first four characters find the file; the last eight unlock it.</p>
       <p>The QR code and the link carry the same code, so treat them like the code itself. Files can be up to 25 MB. Share codes privately: anyone who has one can open the file until it expires. Expired files are cleared out automatically.</p>
+      <p>Send by QR animation works with no internet at all: the file travels as a stream of QR codes from this screen to the other phone’s camera. Missed frames don’t matter because each frame carries a different mix of the file (a fountain code), and the whole file is checked at the end. It isn’t encrypted, so anyone filming the screen could capture it, and it’s slow: a few KB per second.</p>
     </details>
   </section>
 
@@ -164,7 +209,14 @@ details p{color:var(--ink-2);max-width:62ch}
     <div class="scanner" id="scanner" hidden>
       <video id="scanVideo" playsinline muted autoplay aria-label="Camera view for scanning a QR code"></video>
       <div class="frame" aria-hidden="true"></div>
-      <p class="hint" id="scanHint" aria-live="polite">Point at the QR code on the sender’s screen</p>
+      <p class="hint" id="scanHint" aria-live="polite">Point at the sender’s QR code, still or moving</p>
+    </div>
+    <div class="rxbeam" id="rxBeam" hidden>
+      <div class="meter-head"><span>Frames collected</span><b id="bColL">0%</b></div>
+      <div class="meter col"><i id="bCol"></i></div>
+      <div class="meter-head"><span>Blocks decoded</span><b id="bDecL">0%</b></div>
+      <div class="meter"><i id="bDec"></i></div>
+      <p class="beamstats" id="rxBeamStats"></p>
     </div>
     <p class="status" id="rxStatus" aria-live="polite"></p>
     <div class="meter" id="rxMeter" hidden><i id="rxBar"></i></div>
@@ -312,15 +364,160 @@ function friendly(e) {
   return `Something went wrong${e && e.code ? ` (${e.code})` : ''}. Try again.`;
 }
 
+// ---------- Photon codec (animated-QR transfer): framing, base45, CRC32, LT fountain code ----------
+const CRC_TABLE = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(bytes) { let c = 0xFFFFFFFF; for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+
+// Base45 (RFC 9285) so frames fit QR alphanumeric mode: ~3% overhead vs raw bytes, and every
+// decoder (native BarcodeDetector or jsQR) returns it as clean text.
+const B45 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:";
+const B45_INV = (() => { const m = new Int16Array(128).fill(-1); for (let i = 0; i < 45; i++) m[B45.charCodeAt(i)] = i; return m; })();
+function b45encode(b) {
+  const out = [];
+  for (let i = 0; i < b.length; i += 2) {
+    if (i + 1 < b.length) { const x = b[i] * 256 + b[i + 1]; out.push(B45[x % 45], B45[((x / 45) | 0) % 45], B45[(x / 2025) | 0]); }
+    else { const x = b[i]; out.push(B45[x % 45], B45[(x / 45) | 0]); }
+  }
+  return out.join("");
+}
+function b45decode(s) {
+  const n = s.length; if (n % 3 === 1) return null;
+  const out = new Uint8Array(Math.floor(n / 3) * 2 + (n % 3 === 2 ? 1 : 0)); let o = 0;
+  for (let i = 0; i < n; i += 3) {
+    const c0 = B45_INV[s.charCodeAt(i)] ?? -1, c1 = B45_INV[s.charCodeAt(i + 1)] ?? -1;
+    if (c0 < 0 || c1 < 0) return null;
+    if (i + 2 < n) { const c2 = B45_INV[s.charCodeAt(i + 2)] ?? -1; if (c2 < 0) return null; const x = c0 + c1 * 45 + c2 * 2025; if (x > 65535) return null; out[o++] = x >> 8; out[o++] = x & 255; }
+    else { const x = c0 + c1 * 45; if (x > 255) return null; out[o++] = x; }
+  }
+  return out;
+}
+
+// Deterministic PRNG shared by sender and receiver (integer-only, identical on every JS engine)
+function mulberry32(a) { return function () { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return (t ^ (t >>> 14)) >>> 0; }; }
+
+// Robust soliton degree distribution (Luby 2002). Returns cumulative distribution over degree 1..K.
+function solitonCDF(K, c = K < 300 ? 0.1 : 0.03, delta = 0.5) {
+  const p = new Float64Array(K + 1);
+  if (K === 1) { p[1] = 1; return p; }
+  p[1] = 1 / K;
+  for (let d = 2; d <= K; d++) p[d] = 1 / (d * (d - 1));
+  const R = c * Math.log(K / delta) * Math.sqrt(K);
+  const spike = Math.max(1, Math.min(K, Math.round(K / R)));
+  for (let d = 1; d < spike; d++) p[d] += R / (d * K);
+  p[spike] += Math.max(0, R * Math.log(R / delta) / K);
+  let s = 0; for (let d = 1; d <= K; d++) s += p[d];
+  let acc = 0; for (let d = 1; d <= K; d++) { acc += p[d] / s; p[d] = acc; }
+  p[K] = 1; return p;
+}
+
+// Which source blocks a given symbol (seed) combines. Pure LT (no systematic first pass): in tests a
+// systematic pass made overhead worse as soon as any frames were dropped (~1.35x vs ~1.2x).
+function symbolIndices(seed, K, fileId, cdf) {
+  const rng = mulberry32((fileId ^ Math.imul(seed + 1, 0x9E3779B1)) >>> 0);
+  const u = rng() / 4294967296;
+  let lo = 1, hi = K; while (lo < hi) { const m = (lo + hi) >> 1; if (cdf[m] >= u) hi = m; else lo = m + 1; }
+  const d = lo;
+  if (d >= K) { const all = new Array(K); for (let i = 0; i < K; i++) all[i] = i; return all; }
+  const set = new Set(); while (set.size < d) set.add(Math.floor((rng() / 4294967296) * K));
+  return [...set];
+}
+function xorInto(dst, src) { for (let i = 0; i < dst.length; i++) dst[i] ^= src[i]; }
+
+// Payload = crc32(file) | nameLen | name | mimeLen | mime | file bytes
+function pBuildPayload(fileBytes, name, mime) {
+  const enc = new TextEncoder(); const nb = enc.encode(name).slice(0, 1000); const mb = enc.encode(mime || "application/octet-stream").slice(0, 200);
+  const out = new Uint8Array(4 + 2 + nb.length + 2 + mb.length + fileBytes.length); const dv = new DataView(out.buffer);
+  let o = 0; dv.setUint32(o, crc32(fileBytes)); o += 4; dv.setUint16(o, nb.length); o += 2; out.set(nb, o); o += nb.length;
+  dv.setUint16(o, mb.length); o += 2; out.set(mb, o); o += mb.length; out.set(fileBytes, o);
+  return out;
+}
+function pParsePayload(p) {
+  const dv = new DataView(p.buffer, p.byteOffset, p.byteLength); const dec = new TextDecoder(); let o = 0;
+  const crc = dv.getUint32(o); o += 4; const nl = dv.getUint16(o); o += 2; const name = dec.decode(p.subarray(o, o + nl)); o += nl;
+  const ml = dv.getUint16(o); o += 2; const mime = dec.decode(p.subarray(o, o + ml)); o += ml; const file = p.slice(o);
+  return { name, mime, file, crcOk: crc32(file) === crc };
+}
+
+// Frame = ver(1) fileId(4) totalLen(4) blockSize(2) seed(4) | block(B) | crc32 of all before (4)
+const FRAME_VER = 0xB1, HDR = 15;
+class Encoder {
+  constructor(payload, B, fileId) {
+    this.B = B; this.fileId = fileId >>> 0; this.L = payload.length; this.K = Math.ceil(this.L / B);
+    this.src = new Uint8Array(this.K * B); this.src.set(payload); this.cdf = solitonCDF(this.K);
+  }
+  frameBytes(seed) {
+    const { B, K } = this; const f = new Uint8Array(HDR + B + 4); const dv = new DataView(f.buffer);
+    f[0] = FRAME_VER; dv.setUint32(1, this.fileId); dv.setUint32(5, this.L); dv.setUint16(9, B); dv.setUint32(11, seed >>> 0);
+    const blk = f.subarray(HDR, HDR + B);
+    for (const i of symbolIndices(seed, K, this.fileId, this.cdf)) xorInto(blk, this.src.subarray(i * B, (i + 1) * B));
+    dv.setUint32(HDR + B, crc32(f.subarray(0, HDR + B)));
+    return f;
+  }
+  frameText(seed) { return b45encode(this.frameBytes(seed)); }
+}
+function parseFrame(bytes) {
+  if (!bytes || bytes.length < HDR + 5 || bytes[0] !== FRAME_VER) return null;
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength); const B = dv.getUint16(9);
+  if (bytes.length !== HDR + B + 4) return null;
+  if (dv.getUint32(HDR + B) !== crc32(bytes.subarray(0, HDR + B))) return null;
+  return { fileId: dv.getUint32(1), L: dv.getUint32(5), B, seed: dv.getUint32(11), data: bytes.subarray(HDR, HDR + B) };
+}
+
+// Peeling (belief-propagation) decoder
+class Decoder {
+  constructor(fileId, L, B) {
+    this.fileId = fileId; this.L = L; this.B = B; this.K = Math.ceil(L / B); this.cdf = solitonCDF(this.K);
+    this.blocks = new Array(this.K).fill(null); this.known = 0; this.waiting = Array.from({ length: this.K }, () => []);
+    this.seen = new Set(); this.unique = 0; this.dups = 0;
+  }
+  get done() { return this.known === this.K; }
+  add(seed, data) {
+    if (this.seen.has(seed)) { this.dups++; return false; }
+    this.seen.add(seed); this.unique++;
+    if (this.done) return true;
+    const d = new Uint8Array(data); const rem = [];
+    for (const i of symbolIndices(seed, this.K, this.fileId, this.cdf)) { if (this.blocks[i]) xorInto(d, this.blocks[i]); else rem.push(i); }
+    if (rem.length === 1) this._resolve(rem[0], d);
+    else if (rem.length > 1) { const pkt = { idx: new Set(rem), data: d, done: false }; for (const i of rem) this.waiting[i].push(pkt); }
+    return true;
+  }
+  _resolve(i0, d0) {
+    const stack = [[i0, d0]];
+    while (stack.length) {
+      const [j, dj] = stack.pop(); if (this.blocks[j]) continue;
+      this.blocks[j] = dj; this.known++;
+      const list = this.waiting[j]; this.waiting[j] = [];
+      for (const p of list) {
+        if (p.done || !p.idx.has(j)) continue;
+        xorInto(p.data, dj); p.idx.delete(j);
+        if (p.idx.size === 1) { p.done = true; const [k] = p.idx; if (!this.blocks[k]) stack.push([k, p.data]); }
+        else if (p.idx.size === 0) p.done = true;
+      }
+    }
+  }
+  payload() { const out = new Uint8Array(this.K * this.B); for (let i = 0; i < this.K; i++) out.set(this.blocks[i], i * this.B); return out.subarray(0, this.L); }
+}
+
+const fmtDur = (s) => s < 60 ? `${Math.max(1, Math.round(s))} s` : `${Math.floor(s / 60)} min ${Math.round(s % 60)} s`;
+let wakeLock = null;
+async function keepAwake() { // keeps the screen on while the animation plays or the camera scans
+  const want = (typeof PS !== 'undefined' && PS.running) || (typeof SC !== 'undefined' && SC.running);
+  try {
+    if (want && !wakeLock && navigator.wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); }
+    else if (!want && wakeLock) { const w = wakeLock; wakeLock = null; await w.release(); }
+  } catch (e) { wakeLock = null; }
+}
+
 // ---------- send ----------
 const S = { file: null, busy: false, last: null };
 $('file').addEventListener('change', (e) => {
   const f = e.target.files[0]; if (!f) return;
-  const reject = (msg) => { S.file = null; e.target.value = ''; $('fileInfo').hidden = true; $('pickBtn').textContent = 'Choose a file'; $('createBtn').disabled = true; $('codeCard').hidden = true; status('sendStatus', msg, true); };
+  const reject = (msg) => { S.file = null; e.target.value = ''; $('fileInfo').hidden = true; $('pickBtn').textContent = 'Choose a file'; $('createBtn').disabled = true; $('beamBtn').disabled = true; closeBeam(); $('codeCard').hidden = true; status('sendStatus', msg, true); };
   if (f.size === 0) return reject('That file is empty.');
   if (f.size > MAX_FILE) return reject(`That file is ${fmtBytes(f.size)}. The limit is 25 MB.`);
   S.file = f; $('fileName').textContent = f.name; $('fileSize').textContent = fmtBytes(f.size); $('fileInfo').hidden = false;
   $('pickBtn').textContent = 'Change file'; status('sendStatus', ''); $('codeCard').hidden = true; $('createBtn').disabled = !configured;
+  $('beamBtn').disabled = false; closeBeam();
 });
 $('pickBtn').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('file').click(); } });
 async function createCode() {
@@ -394,6 +591,86 @@ $('shareBtn').addEventListener('click', async () => {
   catch (e) { if (e && e.name !== 'AbortError') copyText(fmtCode(S.last.code)); }
 });
 
+// ---------- send by QR animation (Photon) ----------
+const PS = { payload: null, enc: null, seed: 0, running: false, B: 500, fps: 12, n: 0, shown: 0, last: 0, times: [], timer: 0 };
+const beamOff = document.createElement('canvas');
+const beamCv = $('beamCanvas'), beamCtx = beamCv.getContext('2d');
+function beamPrepare() { // draws the next frame off-screen at one pixel per module
+  const qr = window.qrcode(0, 'M'); qr.addData(PS.enc.frameText(PS.seed), 'Alphanumeric'); qr.make();
+  const n = qr.getModuleCount(), q = 4, size = n + 2 * q;
+  beamOff.width = size; beamOff.height = size;
+  const ctx = beamOff.getContext('2d'), img = ctx.createImageData(size, size), d = img.data; d.fill(255);
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.isDark(r, c)) { const i = ((r + q) * size + c + q) * 4; d[i] = d[i + 1] = d[i + 2] = 0; }
+  ctx.putImageData(img, 0, 0); PS.n = n; PS.seed = (PS.seed + 1) >>> 0;
+}
+function beamDraw(count) { // scales it up to the screen in whole-pixel steps so modules stay sharp
+  if (!PS.n) return;
+  const r = $('stage').getBoundingClientRect(), avail = Math.min(r.width, r.height); if (!avail) return;
+  const size = PS.n + 8, dpr = window.devicePixelRatio || 1, px = Math.max(size, Math.floor(avail * dpr / size) * size);
+  if (beamCv.width !== px) { beamCv.width = px; beamCv.height = px; }
+  beamCv.style.width = beamCv.style.height = `${px / dpr}px`;
+  beamCtx.imageSmoothingEnabled = false; beamCtx.drawImage(beamOff, 0, 0, px, px);
+  if (count) { PS.shown++; const now = performance.now(); PS.times.push(now); while (PS.times.length && now - PS.times[0] > 1000) PS.times.shift(); }
+}
+function beamStats() {
+  if (!PS.enc) { $('beamStats').textContent = ''; return; }
+  const now = performance.now(); while (PS.times.length && now - PS.times[0] > 1000) PS.times.shift();
+  const best = PS.enc.K * (PS.enc.K < 100 ? 1.5 : 1.2) / PS.fps;
+  $('beamStats').textContent = `${PS.running ? `Showing frame ${PS.shown.toLocaleString()} at ${PS.times.length} fps. ` : ''}QR version ${(PS.n - 17) / 4}, ${PS.enc.K.toLocaleString()} blocks of ${PS.B} bytes. Best case about ${fmtDur(best)} if the camera catches every frame.`;
+}
+function beamBuild() {
+  if (!PS.payload) return false;
+  PS.enc = new Encoder(PS.payload, PS.B, crypto.getRandomValues(new Uint32Array(1))[0]); PS.seed = 0; PS.shown = 0; PS.times = [];
+  try { beamPrepare(); } catch (e) { toast('That density is too high for one QR code. Pick a lower one.'); return false; }
+  beamDraw(false); beamStats(); return true;
+}
+async function openBeam() {
+  if (!S.file) return;
+  if (typeof window.qrcode !== 'function') { status('sendStatus', 'The QR library didn’t load. Check your connection once and reload the page.', true); return; }
+  PS.payload = pBuildPayload(new Uint8Array(await S.file.arrayBuffer()), S.file.name, S.file.type);
+  $('codeCard').hidden = true; $('beam').hidden = false;
+  if (beamBuild()) { $('beamStart').textContent = 'Start'; try { $('beam').scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (e) {} }
+}
+function beamTick(now) {
+  if (!PS.running) return;
+  const iv = 1000 / PS.fps;
+  if (!PS.last || now - PS.last > iv * 4) PS.last = now - iv;
+  if (now - PS.last >= iv - 1.5) {
+    PS.last += iv; beamDraw(true);
+    try { beamPrepare(); } catch (e) { beamPause(); toast('That density is too high for one QR code. Pick a lower one.'); return; }
+  }
+  requestAnimationFrame(beamTick);
+}
+function beamStart() {
+  if (!PS.enc || PS.running) return;
+  PS.running = true; PS.last = 0; $('stage').classList.add('live'); $('beamStart').textContent = 'Pause';
+  requestAnimationFrame(beamTick); keepAwake(); clearInterval(PS.timer); PS.timer = setInterval(beamStats, 500);
+}
+function beamPause() {
+  if (!PS.running) return;
+  PS.running = false; clearInterval(PS.timer); $('stage').classList.remove('live'); $('beamStart').textContent = 'Resume';
+  beamStats(); keepAwake();
+}
+function closeBeam() { beamPause(); $('beam').hidden = true; PS.enc = null; PS.payload = null; PS.n = 0; }
+$('beamBtn').addEventListener('click', openBeam);
+$('beamStart').addEventListener('click', () => PS.running ? beamPause() : beamStart());
+$('beamClose').addEventListener('click', closeBeam);
+$('beamDensity').addEventListener('change', (e) => {
+  PS.B = +e.target.value; const was = PS.running; beamPause();
+  if (beamBuild() && was) { beamStart(); toast('New density: the receiver starts collecting again.'); }
+});
+$('beamFps').addEventListener('change', (e) => { PS.fps = +e.target.value; beamStats(); });
+$('beamFs').addEventListener('click', async () => {
+  const st = $('stage'), req = st.requestFullscreen || st.webkitRequestFullscreen;
+  if (!req) { toast('Full screen isn’t available here. Turn the brightness up instead.'); return; }
+  try { await req.call(st); } catch (e) { toast('Full screen isn’t available here. Turn the brightness up instead.'); }
+});
+$('stage').addEventListener('click', () => { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen(); });
+const beamRefit = () => requestAnimationFrame(() => beamDraw(false));
+document.addEventListener('fullscreenchange', beamRefit);
+document.addEventListener('webkitfullscreenchange', beamRefit);
+window.addEventListener('resize', beamRefit);
+
 // Codes made on this phone (kept only in this browser)
 const STORE = 'codedrop.codes.v1';
 function loadMine() { try { return JSON.parse(localStorage.getItem(STORE) || '[]'); } catch (e) { return []; } }
@@ -451,8 +728,8 @@ async function receive() {
   } catch (e) { meter('rx', null); status('rxStatus', friendly(e), true); }
   R.busy = false; $('getBtn').disabled = false;
 }
-async function showResult() {
-  $('resName').textContent = R.file.name; $('resMeta').textContent = `${fmtBytes(R.file.size)}, decrypted and verified on this phone`;
+async function showResult(meta) {
+  $('resName').textContent = R.file.name; $('resMeta').textContent = meta || `${fmtBytes(R.file.size)}, decrypted and verified on this phone`;
   $('openBtn').hidden = !(navigator.canShare && navigator.canShare({ files: [R.file] }));
   const pv = $('resPreview'); pv.replaceChildren();
   try {
@@ -499,7 +776,9 @@ async function startScan() {
   }
   const v = $('scanVideo'); v.srcObject = SC.stream; try { await v.play(); } catch (e) {}
   SC.running = true; $('scanner').hidden = false; $('result').hidden = true; $('scanBtn').textContent = 'Stop camera';
-  $('scanHint').textContent = 'Point at the QR code on the sender’s screen'; status('rxStatus', '');
+  if (PR.dec && PR.dec.done) { PR.dec = null; $('rxBeam').hidden = true; }
+  $('scanHint').textContent = PR.dec ? 'Collecting again. Earlier frames still count.' : 'Point at the sender’s QR code, still or moving';
+  status('rxStatus', ''); keepAwake();
   try { $('scanner').scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) {}
   scanFrame();
 }
@@ -507,6 +786,8 @@ function stopScan() {
   SC.running = false;
   if (SC.stream) { SC.stream.getTracks().forEach((t) => t.stop()); SC.stream = null; }
   $('scanVideo').srcObject = null; $('scanner').hidden = true; $('scanBtn').textContent = 'Scan QR';
+  if (PR.dec) renderBeamRx();
+  keepAwake();
 }
 function nextScan() {
   if (!SC.running) return;
@@ -522,7 +803,7 @@ async function scanFrame() {
       else if (typeof window.jsQR === 'function') {
         const vw = v.videoWidth, vh = v.videoHeight, side = Math.min(vw, vh);
         if (side) {
-          const t = Math.min(side, 640);
+          const t = Math.min(side, 900);
           if (scanCv.width !== t) { scanCv.width = t; scanCv.height = t; }
           scanCtx.drawImage(v, (vw - side) / 2, (vh - side) / 2, side, side, 0, 0, t, t);
           const res = window.jsQR(scanCtx.getImageData(0, 0, t, t).data, t, t, { inversionAttempts: 'dontInvert' });
@@ -533,6 +814,7 @@ async function scanFrame() {
   } catch (e) {}
   if (!SC.running) return;
   for (const t of texts) {
+    if (handleBeam(t)) { if (!SC.running) return; continue; }
     const code = codeFromText(t);
     if (code) {
       stopScan();
@@ -541,20 +823,65 @@ async function scanFrame() {
     }
     if (Date.now() - SC.lastMiss > 2000) { SC.lastMiss = Date.now(); $('scanHint').textContent = 'That QR code isn’t from Codedrop'; }
   }
+  if (PR.dec && performance.now() - PR.lastRender > 200) renderBeamRx();
   nextScan();
 }
+// Animated QR (Photon) frames: collect until the file is complete, then turn the camera off.
+const PR = { dec: null, t0: 0, ok: [], lastRender: 0 };
+function handleBeam(text) {
+  if (text.length < 40) return false;
+  const f = parseFrame(b45decode(text));
+  if (!f) return false;
+  if (f.L > 64 * 1048576 || f.B < 16 || f.B > 4000) return true;
+  if (PR.dec && PR.dec.fileId === f.fileId && PR.dec.done) return true;
+  if (!PR.dec || PR.dec.fileId !== f.fileId) {
+    const restarted = !!PR.dec;
+    PR.dec = new Decoder(f.fileId, f.L, f.B); PR.t0 = performance.now(); PR.ok = [];
+    $('rxBeam').hidden = false; $('result').hidden = true;
+    $('scanHint').textContent = restarted ? 'The sender changed settings. Collecting again.' : `Receiving about ${fmtBytes(f.L)}. Keep both phones steady.`;
+  }
+  if (PR.dec.add(f.seed, f.data)) PR.ok.push(performance.now());
+  if (PR.dec.done) beamFinish();
+  return true;
+}
+function renderBeamRx() {
+  const d = PR.dec; if (!d) return; PR.lastRender = performance.now();
+  const col = Math.min(1, d.unique / d.K), dec = d.known / d.K;
+  $('bCol').style.width = `${(col * 100).toFixed(1)}%`; $('bColL').textContent = `${Math.floor(col * 100)}%`;
+  $('bDec').style.width = `${(dec * 100).toFixed(1)}%`; $('bDecL').textContent = `${Math.floor(dec * 100)}%`;
+  const now = performance.now(); while (PR.ok.length && now - PR.ok[0] > 1000) PR.ok.shift();
+  $('rxBeamStats').textContent = d.done ? `Complete: ${d.unique.toLocaleString()} frames for ${d.K.toLocaleString()} blocks.`
+    : `${d.unique.toLocaleString()} frames read for ${d.K.toLocaleString()} blocks, ${SC.running ? `${PR.ok.length} per second` : 'paused'}. Missed frames are fine; decoding often finishes in a rush.`;
+}
+async function beamFinish() {
+  const secs = Math.max(0.001, (performance.now() - PR.t0) / 1000);
+  stopScan();
+  try { if (navigator.vibrate) navigator.vibrate([90, 60, 90]); } catch (e) {}
+  let p;
+  try { p = pParsePayload(PR.dec.payload()); } catch (e) { p = null; }
+  if (!p || !p.crcOk) { status('rxStatus', 'The file arrived damaged. Tap Scan QR and scan again.', true); PR.dec = null; return; }
+  R.mime = p.mime || 'application/octet-stream';
+  R.file = new File([p.file], p.name || 'file', { type: R.mime });
+  await showResult(`${fmtBytes(R.file.size)} received by camera in ${fmtDur(secs)}, checksum verified`);
+  saveFile();
+  status('rxStatus', `Downloaded ${R.file.name}. If it didn’t start, tap Save file.`);
+}
 $('scanBtn').addEventListener('click', () => SC.running ? stopScan() : startScan());
-document.addEventListener('visibilitychange', () => { if (document.hidden && SC.running) stopScan(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { if (SC.running) stopScan(); if (PS.running) beamPause(); }
+  else keepAwake();
+});
 $('getBtn').addEventListener('click', receive);
 $('saveBtn').addEventListener('click', saveFile);
 $('openBtn').addEventListener('click', async () => { try { await navigator.share({ files: [R.file] }); } catch (e) {} });
-$('againBtn').addEventListener('click', () => { R.file = null; $('result').hidden = true; $('codeIn').value = ''; status('rxStatus', ''); $('codeIn').focus(); });
+$('againBtn').addEventListener('click', () => { R.file = null; PR.dec = null; $('rxBeam').hidden = true; $('result').hidden = true; $('codeIn').value = ''; status('rxStatus', ''); $('codeIn').focus(); });
 
 // ---------- routing ----------
 function route() {
   const h = location.hash.slice(1);
   const v = h === 'receive' || h.startsWith('r=') ? 'receive' : 'send';
   if (v !== 'receive' && SC.running) stopScan();
+  if (v !== 'send' && PS.running) beamPause();
   $('view-send').hidden = v !== 'send'; $('view-receive').hidden = v !== 'receive';
   for (const a of document.querySelectorAll('.modes a')) { if (a.dataset.view === v) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); }
   if (v === 'send') renderMine();
