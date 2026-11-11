@@ -1,0 +1,80 @@
+# Builds a signed Codedrop APK on GitHub's machines and publishes it under the repository's Releases.
+# Run it from the Actions tab ("Run workflow"), or it runs by itself when anything in android/ changes.
+name: Build Android app (APK)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - '.github/workflows/android.yml'
+
+permissions:
+  contents: write   # needed to publish the release
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      VERSION_CODE: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore the signing key from secrets
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ] || [ -z "$ANDROID_KEYSTORE_PASSWORD" ] || [ -z "$ANDROID_KEY_ALIAS" ] || [ -z "$ANDROID_KEY_PASSWORD" ]; then
+            echo "::error::Add the four ANDROID_* repository secrets first (see android/README.md, step 2)."
+            exit 1
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/release.jks
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build the signed APK
+        working-directory: android
+        run: gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Name the APK and write assetlinks.json
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk codedrop.apk
+          FP=$(keytool -list -v -keystore android/app/release.jks -alias "$ANDROID_KEY_ALIAS" -storepass "$ANDROID_KEYSTORE_PASSWORD" | grep -m1 'SHA256:' | sed 's/.*SHA256: *//')
+          printf '[{\n  "relation": ["delegate_permission/common.handle_all_urls"],\n  "target": {\n    "namespace": "android_app",\n    "package_name": "xyz.jainovation.codedrop",\n    "sha256_cert_fingerprints": ["%s"]\n  }\n}]\n' "$FP" > assetlinks.json
+          rm -f android/app/release.jks
+          {
+            echo "### Codedrop APK built"
+            echo "Download **codedrop.apk** from this repository's Releases (or the artifact below)."
+            echo ""
+            echo "One-time step: put this in \`.well-known/assetlinks.json\` in the repository:"
+            echo '```json'
+            cat assetlinks.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codedrop-apk
+          path: |
+            codedrop.apk
+            assetlinks.json
+
+      - name: Publish the APK as a release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: app-v${{ github.run_number }}
+          name: Codedrop app (build ${{ github.run_number }})
+          body: Install codedrop.apk on Android. assetlinks.json goes in .well-known/ on the website (only needed once).
+          files: |
+            codedrop.apk
+            assetlinks.json

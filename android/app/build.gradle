@@ -1,0 +1,46 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Values come from GitHub Actions; the signing passwords are repository secrets, never stored in the code.
+def env = System.getenv()
+def code = (env['VERSION_CODE'] ?: '1') as int
+
+android {
+    namespace 'xyz.jainovation.codedrop'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'xyz.jainovation.codedrop'
+        minSdk 21
+        targetSdk 35
+        versionCode code
+        versionName "1.0.${code}"
+    }
+
+    signingConfigs {
+        release {
+            storeFile file('release.jks')
+            storePassword env['ANDROID_KEYSTORE_PASSWORD']
+            keyAlias env['ANDROID_KEY_ALIAS']
+            keyPassword env['ANDROID_KEY_PASSWORD']
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+}
+
+dependencies {
+    // Opens the website in a Trusted Web Activity: full Chrome (camera, downloads, QR scanning) without a URL bar.
+    implementation 'com.google.androidbrowserhelper:androidbrowserhelper:2.2.0'
+}

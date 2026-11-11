@@ -1,0 +1,7 @@
+# Never commit the signing key: GitHub Actions rebuilds it from a secret on every run.
+app/release.jks
+*.jks
+*.keystore
+build/
+.gradle/
+local.properties
