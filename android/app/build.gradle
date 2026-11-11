@@ -2,9 +2,8 @@ plugins {
     id 'com.android.application'
 }
 
-// Values come from GitHub Actions; the signing passwords are repository secrets, never stored in the code.
-def env = System.getenv()
-def code = (env['VERSION_CODE'] ?: '1') as int
+// GitHub Actions sets VERSION_CODE so every build installs as an update.
+def code = (System.getenv('VERSION_CODE') ?: '1') as int
 
 android {
     namespace 'xyz.jainovation.codedrop'
@@ -18,12 +17,14 @@ android {
         versionName "1.0.${code}"
     }
 
+    // The signing key is part of the project, so builds need no setup. Every build uses the same key,
+    // which keeps updates installable and matches .well-known/assetlinks.json on the website.
     signingConfigs {
         release {
-            storeFile file('release.jks')
-            storePassword env['ANDROID_KEYSTORE_PASSWORD']
-            keyAlias env['ANDROID_KEY_ALIAS']
-            keyPassword env['ANDROID_KEY_PASSWORD']
+            storeFile file('codedrop-signing.jks')
+            storePassword 'codedrop'
+            keyAlias 'codedrop'
+            keyPassword 'codedrop'
         }
     }
 
