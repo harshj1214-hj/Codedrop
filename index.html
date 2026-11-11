@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Codedrop: send a file with a code</title>
+<meta name="theme-color" content="#13233A">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&display=swap" rel="stylesheet">
@@ -254,7 +258,7 @@ details p{color:var(--ink-2);max-width:62ch}
       <div class="preview" id="resPreview"></div>
       <div class="row">
         <button class="btn grow" id="saveBtn">Save file</button>
-        <button class="btn quiet" id="openBtn" hidden>Open in…</button>
+        <button class="btn quiet" id="openBtn" hidden>Share or save</button>
         <button class="btn quiet" id="againBtn">Enter another code</button>
       </div>
     </div>
@@ -759,8 +763,7 @@ async function receive() {
     R.file = new File([p.bytes], p.name || 'file', { type: R.mime });
     meter('rx', 1); status('rxStatus', '');
     await showResult(); setTimeout(() => meter('rx', null), 400);
-    saveFile();
-    status('rxStatus', `Downloaded ${R.file.name}. If it didn’t start, tap Save file.`);
+    offerSave();
   } catch (e) { meter('rx', null); status('rxStatus', friendly(e), true); }
   R.busy = false; $('getBtn').disabled = false;
 }
@@ -779,10 +782,22 @@ async function showResult(meta) {
   } catch (e) {}
   $('result').hidden = false;
 }
-function saveFile() {
-  if (!R.file) return;
+// Phones (and the Android app especially) only allow a download right after a tap. So an automatic
+// save is attempted only while the browser still counts the user's last tap; otherwise we ask for one.
+function saveFile(auto) {
+  if (!R.file) return false;
+  if (auto && navigator.userActivation && !navigator.userActivation.isActive) return false;
   const a = document.createElement('a'); a.href = URL.createObjectURL(R.file); a.download = R.file.name;
   document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+  return true;
+}
+function offerSave() {
+  const started = saveFile(true);
+  const share = !$('openBtn').hidden;
+  status('rxStatus', started
+    ? `Saving ${R.file.name} to Downloads. If no download appears, tap Save file${share ? ' or Share or save' : ''}.`
+    : `${R.file.name} is ready. Tap Save file to keep it${share ? ', or Share or save to send it to another app' : ''}.`);
+  if (!started) { try { $('saveBtn').focus({ preventScroll: true }); $('result').scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) {} }
 }
 // ---------- QR scanner ----------
 // Reads a bare code or a Codedrop link. The camera turns off the moment a valid code is read.
@@ -909,8 +924,7 @@ async function beamFinish() {
   R.mime = p.mime || 'application/octet-stream';
   R.file = new File([p.file], p.name || 'file', { type: R.mime });
   await showResult(`${fmtBytes(R.file.size)} received by camera in ${fmtDur(secs)}, checksum verified`);
-  saveFile();
-  status('rxStatus', `Downloaded ${R.file.name}. If it didn’t start, tap Save file.`);
+  offerSave();
 }
 $('scanBtn').addEventListener('click', () => SC.running ? stopScan() : startScan());
 document.addEventListener('visibilitychange', () => {
@@ -918,8 +932,13 @@ document.addEventListener('visibilitychange', () => {
   else keepAwake();
 });
 $('getBtn').addEventListener('click', receive);
-$('saveBtn').addEventListener('click', saveFile);
-$('openBtn').addEventListener('click', async () => { try { await navigator.share({ files: [R.file] }); } catch (e) {} });
+$('saveBtn').addEventListener('click', () => {
+  if (saveFile(false)) status('rxStatus', `Saving ${R.file.name} to Downloads. Check the download notification${$('openBtn').hidden ? '' : '; if none appears, use Share or save'}.`);
+});
+$('openBtn').addEventListener('click', async () => {
+  try { await navigator.share({ files: [R.file], title: R.file.name }); }
+  catch (e) { if (e && e.name !== 'AbortError') status('rxStatus', 'Sharing isn’t available here. Tap Save file instead.', true); }
+});
 $('againBtn').addEventListener('click', () => { R.file = null; PR.dec = null; $('rxBeam').hidden = true; $('scanProg').hidden = true; $('result').hidden = true; $('codeIn').value = ''; status('rxStatus', ''); $('codeIn').focus(); });
 
 // ---------- routing ----------
@@ -943,6 +962,10 @@ function openLinked() {
 }
 window.addEventListener('hashchange', openLinked);
 openLinked();
+// Offline support and app install (also what the Android app needs).
+if ('serviceWorker' in navigator && window.isSecureContext) {
+  window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
+}
 </script>
 </body>
 </html>
