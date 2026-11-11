@@ -161,6 +161,7 @@ details p{color:var(--ink-2);max-width:62ch}
       <div class="row">
         <button class="btn" id="createBtn" disabled>Create code</button>
         <button class="btn quiet" id="beamBtn" disabled>Send by QR animation</button>
+        <button class="btn quiet" id="directBtn" disabled>Send directly</button>
       </div>
       <p class="status" id="sendStatus" aria-live="polite"></p>
       <div class="meter" id="sendMeter" hidden><i id="sendBar"></i></div>
@@ -179,6 +180,23 @@ details p{color:var(--ink-2);max-width:62ch}
           <button class="btn quiet" id="shareBtn" hidden>Share</button>
         </div>
       </div>
+
+      <section class="beam" id="direct" hidden aria-labelledby="directH">
+        <h2 id="directH">Send directly</h2>
+        <p class="sub">Phone to phone: the file is never stored on any server. Both phones need internet, and this screen must stay open until the other phone has the file.</p>
+        <p class="code" id="dCode" aria-label="Code"></p>
+        <div class="qrwrap" id="dQrWrap" hidden>
+          <div class="qrbox"><canvas id="dQr" role="img" aria-label="QR code for receiving this file directly"></canvas></div>
+          <p class="qrnote">Scan with the other phone’s camera, or type the code on its Receive tab.</p>
+        </div>
+        <div class="meter-head"><span id="dLabel">Getting a code…</span><b id="dPct"></b></div>
+        <div class="meter"><i id="dBar"></i></div>
+        <p class="beamstats" id="dStatus"></p>
+        <div class="row">
+          <button class="btn quiet" id="dCopy" disabled>Copy link</button>
+          <button class="btn quiet" id="dClose">Stop sharing</button>
+        </div>
+      </section>
 
       <section class="beam" id="beam" hidden aria-labelledby="beamH">
         <h2 id="beamH">Send by QR animation</h2>
@@ -222,6 +240,7 @@ details p{color:var(--ink-2);max-width:62ch}
       <summary>How it works</summary>
       <p>The file is encrypted on your phone with AES-256-GCM before it’s uploaded. The key is derived from the code (PBKDF2, 250,000 rounds) and the code is never uploaded, so the storage only holds scrambled data. The first four characters find the file; the last eight unlock it.</p>
       <p>The QR code and the link carry the same code, so treat them like the code itself. Files can be up to 25 MB. Share codes privately: anyone who has one can open the file until it expires. Expired files are cleared out automatically.</p>
+      <p>Send directly connects the two phones over the internet and streams the file between them, so nothing is stored anywhere. A free public matchmaking service (PeerJS) only introduces the phones; the file itself is encrypted in transit by the phones. It needs both phones online at the same time, and a few networks block direct connections; Create code works on those. Files can be up to 100 MB.</p>
       <p>Send by QR animation works with no internet at all: the file travels as a stream of QR codes from this screen to the other phone’s camera. Missed frames don’t matter because each frame carries a different mix of the file (a fountain code), and the whole file is checked at the end. It isn’t encrypted, so anyone filming the screen could capture it, and it’s slow: a few KB per second.</p>
     </details>
   </section>
@@ -268,6 +287,7 @@ details p{color:var(--ink-2);max-width:62ch}
 
 <script async src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 <script async src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script async src="https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js"></script>
 <script>
 'use strict';
 // ====== SETUP: paste your Supabase project URL and publishable (or anon) key here ======
@@ -279,7 +299,8 @@ const CONFIG = {
 // =======================================================================================
 const BUCKET = 'codedrop';
 const ITERS = 250000;
-const MAX_FILE = 25 * 1048576;
+const MAX_FILE = 25 * 1048576;     // Create code (stored)
+const MAX_DIRECT = 100 * 1048576;  // Send directly / QR animation (never stored)
 const ALPH = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'; // Crockford base32: no I, L, O or U
 const $ = (id) => document.getElementById(id);
 const configured = !/YOUR-/.test(CONFIG.url + CONFIG.key) && /^https:\/\//.test(CONFIG.url);
@@ -531,7 +552,7 @@ class Decoder {
 const fmtDur = (s) => s < 60 ? `${Math.max(1, Math.round(s))} s` : `${Math.floor(s / 60)} min ${Math.round(s % 60)} s`;
 let wakeLock = null;
 async function keepAwake() { // keeps the screen on while the animation plays or the camera scans
-  const want = (typeof PS !== 'undefined' && PS.running) || (typeof SC !== 'undefined' && SC.running);
+  const want = (typeof PS !== 'undefined' && PS.running) || (typeof SC !== 'undefined' && SC.running) || (typeof D !== 'undefined' && !!D.peer);
   try {
     if (want && !wakeLock && navigator.wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); }
     else if (!want && wakeLock) { const w = wakeLock; wakeLock = null; await w.release(); }
@@ -542,12 +563,13 @@ async function keepAwake() { // keeps the screen on while the animation plays or
 const S = { file: null, busy: false, last: null };
 $('file').addEventListener('change', (e) => {
   const f = e.target.files[0]; if (!f) return;
-  const reject = (msg) => { S.file = null; e.target.value = ''; $('fileInfo').hidden = true; $('pickBtn').textContent = 'Choose a file'; $('createBtn').disabled = true; $('beamBtn').disabled = true; closeBeam(); $('codeCard').hidden = true; status('sendStatus', msg, true); };
+  const reject = (msg) => { S.file = null; e.target.value = ''; $('fileInfo').hidden = true; $('pickBtn').textContent = 'Choose a file'; $('createBtn').disabled = true; $('beamBtn').disabled = true; $('directBtn').disabled = true; closeBeam(); closeDirect(); $('codeCard').hidden = true; status('sendStatus', msg, true); };
   if (f.size === 0) return reject('That file is empty.');
-  if (f.size > MAX_FILE) return reject(`That file is ${fmtBytes(f.size)}. The limit is 25 MB.`);
+  if (f.size > MAX_DIRECT) return reject(`That file is ${fmtBytes(f.size)}. The limit is 100 MB (25 MB for Create code).`);
   S.file = f; $('fileName').textContent = f.name; $('fileSize').textContent = fmtBytes(f.size); $('fileInfo').hidden = false;
-  $('pickBtn').textContent = 'Change file'; status('sendStatus', ''); $('codeCard').hidden = true; $('createBtn').disabled = !configured;
-  $('beamBtn').disabled = false; closeBeam();
+  $('pickBtn').textContent = 'Change file'; $('codeCard').hidden = true; $('createBtn').disabled = !configured || f.size > MAX_FILE;
+  status('sendStatus', f.size > MAX_FILE ? 'Over 25 MB, so Create code can’t take it. Use Send directly instead.' : '');
+  $('beamBtn').disabled = false; $('directBtn').disabled = false; closeBeam(); closeDirect();
 });
 $('pickBtn').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('file').click(); } });
 async function createCode() {
@@ -580,7 +602,7 @@ async function createCode() {
     remember(S.last); showCode(); setTimeout(() => meter('send', null), 400);
     cleanupExpired();
   } catch (e) { meter('send', null); status('sendStatus', friendly(e), true); }
-  S.busy = false; $('createBtn').disabled = !S.file || !configured;
+  S.busy = false; $('createBtn').disabled = !S.file || !configured || S.file.size > MAX_FILE;
 }
 function showCode() {
   const { code, exp, name } = S.last;
@@ -594,13 +616,13 @@ function showCode() {
 // A link that opens this page on the Receive tab and starts the download. The code sits after #,
 // which browsers never send to the web server.
 const receiveLink = (code) => `${location.origin}${location.pathname}#r=${code}`;
-function renderQR(text) {
-  const wrap = $('qrWrap');
+function renderQR(text, canvasId = 'qrCanvas', wrapId = 'qrWrap') {
+  const wrap = $(wrapId);
   if (typeof window.qrcode !== 'function') { wrap.hidden = true; return; }
   try {
     const qr = window.qrcode(0, 'M'); qr.addData(text); qr.make();
     const n = qr.getModuleCount(), q = 4, size = n + 2 * q, scale = Math.max(4, Math.ceil(344 / size));
-    const cv = $('qrCanvas'), ctx = cv.getContext('2d'); cv.width = cv.height = size * scale;
+    const cv = $(canvasId), ctx = cv.getContext('2d'); cv.width = cv.height = size * scale;
     ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, cv.width, cv.height); ctx.fillStyle = '#000000';
     for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.isDark(r, c)) ctx.fillRect((c + q) * scale, (r + q) * scale, scale, scale);
     wrap.hidden = false;
@@ -666,9 +688,9 @@ function beamBuild() {
 }
 async function openBeam() {
   if (!S.file) return;
-  if (typeof window.qrcode !== 'function') { status('sendStatus', 'The QR library didn’t load. Check your connection once and reload the page.', true); return; }
+  if (!(await waitForLib(() => typeof window.qrcode === 'function'))) { status('sendStatus', 'The QR library didn’t load. Check your connection once and reload the page.', true); return; }
   PS.payload = pBuildPayload(new Uint8Array(await S.file.arrayBuffer()), S.file.name, S.file.type);
-  $('codeCard').hidden = true; $('beam').hidden = false;
+  closeDirect(); $('codeCard').hidden = true; $('beam').hidden = false;
   if (beamBuild()) { $('beamStart').textContent = 'Start'; try { $('beam').scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (e) {} }
 }
 function beamTick(now) {
@@ -711,6 +733,106 @@ document.addEventListener('fullscreenchange', beamRefit);
 document.addEventListener('webkitfullscreenchange', beamRefit);
 window.addEventListener('resize', beamRefit);
 
+// ---------- send directly (WebRTC, phone to phone) ----------
+// Code = 4 characters that find this phone + 4 secret characters this phone checks before sending.
+const peerIdFor = (lookup) => `codedrop-hj1214-${lookup.toLowerCase()}`;
+const PeerLib = () => window.Peer || (window.peerjs && window.peerjs.Peer) || null;
+// Libraries load in the background; a page opened from a link can need one before it has arrived.
+async function waitForLib(get, ms = 15000) {
+  const t0 = Date.now();
+  while (!get() && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 100));
+  return get();
+}
+const hex = (buf) => Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, '0')).join('');
+const directLink = (code) => `${location.origin}${location.pathname}#p=${code}`;
+const D = { peer: null, file: null, bytes: null, hashP: null, code: '', fails: 0, busy: false };
+function dSet(label, frac, note, isErr) {
+  $('dLabel').textContent = label; $('dLabel').style.color = isErr ? 'var(--danger)' : '';
+  $('dBar').style.width = `${((frac || 0) * 100).toFixed(1)}%`; $('dPct').textContent = frac == null ? '' : `${Math.floor(frac * 100)}%`;
+  $('dStatus').textContent = note || '';
+}
+function closeDirect() {
+  if (D.peer) { const p = D.peer; D.peer = null; try { p.destroy(); } catch (e) {} }
+  Object.assign(D, { file: null, bytes: null, hashP: null, code: '', fails: 0, busy: false });
+  $('direct').hidden = true; keepAwake();
+}
+async function openDirect() {
+  if (!S.file) return;
+  const Peer = await waitForLib(PeerLib);
+  if (!Peer) { status('sendStatus', 'The direct-transfer library didn’t load. Check your connection and reload the page.', true); return; }
+  closeDirect(); closeBeam(); $('codeCard').hidden = true;
+  D.file = S.file; D.bytes = new Uint8Array(await D.file.arrayBuffer());
+  D.hashP = crypto.subtle.digest('SHA-256', D.bytes).then(hex);
+  $('dCode').replaceChildren(); $('dQrWrap').hidden = true; $('dCopy').disabled = true;
+  $('direct').hidden = false; dSet('Getting a code…', null, '');
+  try { $('direct').scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (e) {}
+  startPeer(Peer, 0);
+}
+function startPeer(Peer, attempt) {
+  const lookup = randCode(4), code = lookup + randCode(4);
+  const peer = new Peer(peerIdFor(lookup)); D.peer = peer;
+  peer.on('open', () => {
+    if (D.peer !== peer) return;
+    D.code = code;
+    $('dCode').replaceChildren(...code.match(/.{4}/g).map((g) => { const sp = document.createElement('span'); sp.textContent = g; return sp; }));
+    renderQR(directLink(code), 'dQr', 'dQrWrap'); $('dCopy').disabled = false;
+    dSet('Waiting for the other phone…', null, `Keep this screen open. ${D.file.name}, ${fmtBytes(D.file.size)}.`);
+    keepAwake();
+  });
+  peer.on('connection', (conn) => handleIncoming(conn));
+  peer.on('disconnected', () => { if (D.peer === peer && !peer.destroyed) { try { peer.reconnect(); } catch (e) {} } });
+  peer.on('error', (err) => {
+    if (D.peer !== peer) return;
+    if (err && err.type === 'unavailable-id' && attempt < 4) { try { peer.destroy(); } catch (e) {} startPeer(Peer, attempt + 1); return; }
+    if (err && err.type === 'peer-unavailable') return; // not ours: only receivers connect out
+    const t = err && err.type;
+    dSet(t === 'network' || t === 'server-error' || t === 'socket-error' || t === 'socket-closed'
+      ? 'Can’t reach the matchmaking service.' : `Direct sharing stopped (${t || 'error'}).`, null,
+      'Check your internet connection, then tap Send directly again. Create code works on any network.', true);
+  });
+}
+function handleIncoming(conn) {
+  conn.on('data', async (d) => {
+    if (typeof d !== 'string') return;
+    let m; try { m = JSON.parse(d); } catch (e) { return; }
+    if (m.t === 'got') { dSet('Delivered', 1, `${D.file ? D.file.name : 'The file'} arrived and was verified on the other phone. Keep sharing for more phones, or tap Stop sharing.`); return; }
+    if (m.t !== 'hello') return;
+    if (!D.code || m.s !== D.code.slice(4)) {
+      D.fails++; try { conn.send(JSON.stringify({ t: 'denied' })); } catch (e) {} setTimeout(() => { try { conn.close(); } catch (e) {} }, 300);
+      if (D.fails >= 5) { closeDirect(); status('sendStatus', 'Five wrong codes were tried, so sharing stopped. Tap Send directly to make a new code.', true); }
+      return;
+    }
+    if (D.busy) { try { conn.send(JSON.stringify({ t: 'busy' })); } catch (e) {} setTimeout(() => { try { conn.close(); } catch (e) {} }, 300); return; }
+    D.busy = true;
+    try { await sendOver(conn); }
+    catch (e) { if (D.peer) dSet('The connection dropped before the file finished.', null, 'The other phone can enter the code again; the transfer restarts.', true); }
+    D.busy = false;
+  });
+}
+async function sendOver(conn) {
+  const bytes = D.bytes, total = bytes.length, CH = 32 * 1024, t0 = performance.now();
+  conn.send(JSON.stringify({ t: 'meta', name: D.file.name, mime: D.file.type || 'application/octet-stream', size: total, sha: await D.hashP }));
+  let last = 0;
+  for (let o = 0; o < total; o += CH) {
+    if (!conn.open || !D.peer) throw new Error('closed');
+    while ((conn.dataChannel && conn.dataChannel.bufferedAmount > 4 * 1048576) || conn.bufferSize > 16) {
+      await new Promise((r) => setTimeout(r, 15));
+      if (!conn.open || !D.peer) throw new Error('closed');
+    }
+    conn.send(bytes.slice(o, o + CH).buffer);
+    const sent = Math.min(total, o + CH), now = performance.now();
+    if (now - last > 150 || sent === total) {
+      last = now; const secs = (now - t0) / 1000;
+      dSet('Sending to the other phone…', sent / total, `${fmtBytes(sent)} of ${fmtBytes(total)}${secs > 0.5 ? `, ${(sent / 1024 / secs).toFixed(0)} KB/s` : ''}`);
+    }
+  }
+  conn.send(JSON.stringify({ t: 'done' }));
+  dSet('Sent. Waiting for the other phone to confirm…', 1, '');
+}
+$('directBtn').addEventListener('click', openDirect);
+$('dClose').addEventListener('click', closeDirect);
+$('dCopy').addEventListener('click', () => D.code && copyText(directLink(D.code), 'Link'));
+
 // Codes made on this phone (kept only in this browser)
 const STORE = 'codedrop.codes.v1';
 function loadMine() { try { return JSON.parse(localStorage.getItem(STORE) || '[]'); } catch (e) { return []; } }
@@ -740,9 +862,10 @@ $('codeIn').addEventListener('keydown', (e) => { if (e.key === 'Enter') receive(
 async function receive() {
   if (R.busy) return;
   if (SC.running) stopScan();
-  if (!configured) { status('rxStatus', 'This copy of Codedrop isn’t connected to storage yet.', true); return; }
   const code = normalizeCode($('codeIn').value);
-  if (code.length !== 12) { status('rxStatus', `Codes have 12 characters. You’ve typed ${code.length}.`, true); return; }
+  if (code.length === 8) return receiveDirectFlow(code);
+  if (!configured) { status('rxStatus', 'This copy of Codedrop isn’t connected to storage yet.', true); return; }
+  if (code.length !== 12) { status('rxStatus', `Codes have 8 or 12 characters. You’ve typed ${code.length}.`, true); return; }
   R.busy = true; $('getBtn').disabled = true; $('result').hidden = true;
   try {
     const lookup = code.slice(0, 4);
@@ -799,16 +922,78 @@ function offerSave() {
     : `${R.file.name} is ready. Tap Save file to keep it${share ? ', or Share or save to send it to another app' : ''}.`);
   if (!started) { try { $('saveBtn').focus({ preventScroll: true }); $('result').scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) {} }
 }
+// ---------- receive directly (WebRTC) ----------
+function receiveDirect(code) {
+  return new Promise((resolve) => {
+    const Peer = PeerLib();
+    if (!Peer) return resolve({ friendly: 'The direct-transfer library didn’t load. Check your connection and reload the page.' });
+    const peer = new Peer();
+    let conn = null, meta = null, parts = [], got = 0, done = false, timer = 0, chain = Promise.resolve();
+    const finish = (err) => { if (done) return; done = true; clearTimeout(timer); setTimeout(() => { try { peer.destroy(); } catch (e) {} }, 400); resolve(err || null); };
+    const stall = (ms, msg) => { clearTimeout(timer); timer = setTimeout(() => finish({ friendly: msg }), ms); };
+    stall(25000, 'Couldn’t reach the sender’s phone. Both phones need internet and the sender must keep Send directly open. Some networks block direct connections: try both phones on mobile data, or use Create code.');
+    peer.on('open', () => {
+      conn = peer.connect(peerIdFor(code.slice(0, 4)), { reliable: true, serialization: 'raw' });
+      conn.on('open', () => { conn.send(JSON.stringify({ t: 'hello', s: code.slice(4) })); status('rxStatus', 'Connected. Waiting for the file…'); meter('rx', 0.05); });
+      conn.on('data', (d) => { chain = chain.then(() => onData(d)).catch(() => finish({ friendly: 'Something went wrong while receiving. Try again.' })); });
+      conn.on('close', () => finish({ friendly: meta ? 'The sender closed the connection before the file finished. Try again.' : 'The sender’s phone ended the connection.' }));
+      conn.on('error', () => finish({ friendly: 'The connection to the sender’s phone failed. Try again.' }));
+    });
+    peer.on('error', (err) => {
+      const t = err && err.type;
+      finish({ friendly: t === 'peer-unavailable' ? 'The sender isn’t sharing this code right now. Ask them to tap Send directly and keep that screen open.'
+        : t === 'network' || t === 'server-error' || t === 'socket-error' || t === 'socket-closed' ? 'Couldn’t reach the matchmaking service. Check your internet connection.'
+        : `Couldn’t connect to the sender (${t || 'error'}).` });
+    });
+    async function onData(d) {
+      if (done) return;
+      if (typeof d === 'string') {
+        let m; try { m = JSON.parse(d); } catch (e) { return; }
+        if (m.t === 'denied') return finish({ friendly: 'That code doesn’t match. Check the last four characters.' });
+        if (m.t === 'busy') return finish({ friendly: 'The sender is sending to another phone. Try again in a moment.' });
+        if (m.t === 'meta') { meta = m; parts = []; got = 0; status('rxStatus', `Receiving ${m.name} (${fmtBytes(m.size)})…`); stall(20000, 'The transfer stalled. Try again.'); return; }
+        if (m.t === 'done' && meta) {
+          const blob = new Blob(parts, { type: meta.mime });
+          if (blob.size !== meta.size) return finish({ friendly: 'The file arrived incomplete. Try again.' });
+          status('rxStatus', 'Checking the file…');
+          if (meta.sha && hex(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer())) !== meta.sha) return finish({ friendly: 'The file arrived damaged. Try again.' });
+          try { conn.send(JSON.stringify({ t: 'got' })); } catch (e) {}
+          R.mime = meta.mime || 'application/octet-stream'; R.file = new File([blob], meta.name || 'file', { type: R.mime });
+          return finish(null);
+        }
+        return;
+      }
+      if (!meta) return;
+      const buf = d instanceof Blob ? await d.arrayBuffer() : d;
+      parts.push(buf); got += buf.byteLength;
+      meter('rx', 0.05 + 0.9 * Math.min(1, got / meta.size)); stall(20000, 'The transfer stalled. Try again.');
+    }
+  });
+}
+async function receiveDirectFlow(code) {
+  R.busy = true; $('getBtn').disabled = true; $('result').hidden = true;
+  status('rxStatus', 'Connecting to the sender’s phone…'); meter('rx', 0.02);
+  await waitForLib(PeerLib);
+  const t0 = performance.now(), err = await receiveDirect(code);
+  if (err) { meter('rx', null); status('rxStatus', friendly(err), true); }
+  else {
+    meter('rx', 1);
+    await showResult(`${fmtBytes(R.file.size)} received directly from the sender’s phone in ${fmtDur((performance.now() - t0) / 1000)}, checksum verified`);
+    setTimeout(() => meter('rx', null), 400); offerSave();
+  }
+  R.busy = false; $('getBtn').disabled = false;
+}
+
 // ---------- QR scanner ----------
 // Reads a bare code or a Codedrop link. The camera turns off the moment a valid code is read.
 const SC = { stream: null, running: false, detector: undefined, lastMiss: 0 };
 const scanCv = document.createElement('canvas');
 const scanCtx = scanCv.getContext('2d', { willReadFrequently: true });
 function codeFromText(text) {
-  const t = String(text || '').trim(), i = t.indexOf('#r=');
+  const t = String(text || '').trim(), mt = /#[rp]=/.exec(t), i = mt ? mt.index : -1;
   if (i < 0 && /[/:.]/.test(t)) return null; // some other link or text
   const c = normalizeCode((i >= 0 ? t.slice(i + 3) : t).split(/[&#?]/)[0]);
-  return c.length === 12 ? c : null;
+  return c.length === 12 || c.length === 8 ? c : null;
 }
 async function startScan() {
   if (SC.running || R.busy) return;
@@ -944,7 +1129,7 @@ $('againBtn').addEventListener('click', () => { R.file = null; PR.dec = null; $(
 // ---------- routing ----------
 function route() {
   const h = location.hash.slice(1);
-  const v = h === 'receive' || h.startsWith('r=') ? 'receive' : 'send';
+  const v = h === 'receive' || /^[rp]=/.test(h) ? 'receive' : 'send';
   if (v !== 'receive' && SC.running) stopScan();
   if (v !== 'send' && PS.running) beamPause();
   $('view-send').hidden = v !== 'send'; $('view-receive').hidden = v !== 'receive';
@@ -956,7 +1141,7 @@ $('noConfig').hidden = configured;
 // removed from the address bar so it doesn't linger on screen.
 function openLinked() {
   let code = null;
-  if (location.hash.startsWith('#r=')) { code = codeFromText(location.hash); history.replaceState(null, '', `${location.pathname}${location.search}#receive`); }
+  if (/^#[rp]=/.test(location.hash)) { code = codeFromText(location.hash); history.replaceState(null, '', `${location.pathname}${location.search}#receive`); }
   route();
   if (code) { $('codeIn').value = fmtCode(code); receive(); }
 }
