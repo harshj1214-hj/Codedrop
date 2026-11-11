@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Codedrop: send a file with a code</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#E8EDF2; --surface:#FFFFFF; --ink:#13233A; --ink-2:#4B5B71; --line:#C7D1DC;
+  --accent:#A8670F; --accent-soft:rgba(226,160,40,.16); --btn-bg:#13233A; --btn-ink:#FFFFFF;
+  --track:#D5DDE6; --danger:#B42318; --ok:#1F7A4D;
+  color-scheme:light; box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0E1A2B; --surface:#16263E; --ink:#E6ECF4; --ink-2:#9CAEC4; --line:#2A3E5C;
+    --accent:#F2B544; --accent-soft:rgba(242,181,68,.12); --btn-bg:#F2B544; --btn-ink:#0E1A2B;
+    --track:#22344F; --danger:#F97066; --ok:#4ADE9A; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0E1A2B; --surface:#16263E; --ink:#E6ECF4; --ink-2:#9CAEC4; --line:#2A3E5C;
+  --accent:#F2B544; --accent-soft:rgba(242,181,68,.12); --btn-bg:#F2B544; --btn-ink:#0E1A2B;
+  --track:#22344F; --danger:#F97066; --ok:#4ADE9A; color-scheme:dark;
+}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*,*::before,*::after{box-sizing:inherit}
+[hidden]{display:none !important}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Archivo",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased}
+.wrap{max-width:540px;margin:0 auto;padding:14px 18px 48px}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:6px 0 14px}
+.brand{margin:0;font-size:29px;line-height:1;font-weight:820;font-stretch:125%;letter-spacing:-.01em}
+.brand span{display:inline-block;width:.3em;height:.3em;border-radius:2px;background:var(--accent);margin-left:.1em;vertical-align:.1em;transform:rotate(45deg)}
+.modes{display:flex;background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:3px}
+.modes a{padding:7px 16px;border-radius:999px;color:var(--ink-2);text-decoration:none;font-weight:620;font-size:15px}
+.modes a[aria-current="page"]{background:var(--ink);color:var(--bg)}
+.lede{margin:0 0 16px;color:var(--ink-2);max-width:60ch}
+.notice{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:0 0 16px}
+.notice.err{border-color:var(--danger)}
+.picker{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.fileinfo{min-width:0;flex:1}
+.fileinfo strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:650}
+.fileinfo small{color:var(--ink-2);font-size:14px}
+.field{display:flex;flex-direction:column;gap:4px;font-size:14px;color:var(--ink-2);margin-bottom:14px;max-width:260px}
+select{font:inherit;font-size:16px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:9px 8px}
+.row{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}
+.btn{font:inherit;font-weight:650;font-size:16px;padding:11px 18px;min-height:46px;border-radius:10px;border:1px solid transparent;background:var(--btn-bg);color:var(--btn-ink);cursor:pointer;display:inline-flex;align-items:center;justify-content:center}
+.btn.quiet{background:transparent;color:var(--ink);border-color:var(--line)}
+.btn.small{min-height:36px;padding:6px 12px;font-size:14px;border-radius:8px}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.grow{flex:1}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.status{margin:6px 0 0;min-height:1.5em;color:var(--ink-2)}
+.status.err{color:var(--danger)}
+.meter{height:6px;background:var(--track);border-radius:3px;overflow:hidden;margin-top:8px}
+.meter i{display:block;height:100%;width:0;background:var(--accent);transition:width .15s linear}
+.codecard{background:var(--accent-soft);border:1px solid var(--accent);border-radius:12px;padding:18px 16px 8px;margin:16px 0}
+.codecard p{margin:0}
+.code{display:flex;flex-wrap:wrap;gap:.35em;font-size:clamp(24px,7.4vw,44px);line-height:1.1;font-weight:760;font-stretch:108%;letter-spacing:.05em;font-variant-numeric:tabular-nums;margin:6px 0 8px !important;user-select:all;-webkit-user-select:all}
+.codecard .sub{color:var(--ink-2);font-size:15px}
+.codein{display:block;width:100%;font:inherit;font-size:clamp(24px,8vw,32px);font-weight:720;font-stretch:112%;letter-spacing:.1em;text-transform:uppercase;text-align:center;padding:12px 10px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink)}
+.codein::placeholder{color:var(--line);letter-spacing:.1em}
+h2{font-size:19px;font-weight:720;font-stretch:108%;margin:26px 0 8px}
+.list{list-style:none;margin:0;padding:0;border-top:1px solid var(--line)}
+.list li{display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:10px 0;border-bottom:1px solid var(--line);align-items:center}
+.list .nm{font-weight:640;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.list .meta{grid-column:1;color:var(--ink-2);font-size:14px;font-variant-numeric:tabular-nums}
+.list .meta.expired{color:var(--danger)}
+.list .acts{grid-column:2;grid-row:1/span 2;display:flex;gap:6px}
+.empty{color:var(--ink-2);font-size:15px;margin:6px 0}
+.result{border:1px solid var(--accent);background:var(--surface);border-radius:12px;padding:16px 16px 6px;margin:16px 0}
+.result h3{margin:0;font-size:22px;font-weight:760;font-stretch:112%}
+.result .nm{margin:6px 0 0;font-weight:650;overflow-wrap:anywhere}
+.result .meta{margin:0;color:var(--ink-2);font-size:15px}
+.preview{margin-top:12px}
+.preview img,.preview video{max-width:100%;max-height:340px;border-radius:6px;display:block}
+.preview pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;max-height:220px;overflow:auto;background:var(--bg);padding:10px;border-radius:6px;margin:0}
+details{border-top:1px solid var(--line);padding-top:12px;margin-top:22px}
+summary{cursor:pointer;font-weight:650}
+details p{color:var(--ink-2);max-width:62ch}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));max-width:min(92vw,440px);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:10px;font-size:15px;z-index:20}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+@media (prefers-reduced-motion: reduce){.meter i{transition:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1 class="brand">Codedrop<span aria-hidden="true"></span></h1>
+    <nav class="modes" aria-label="Mode">
+      <a href="#send" data-view="send">Send</a>
+      <a href="#receive" data-view="receive">Receive</a>
+    </nav>
+  </header>
+
+  <p class="notice err" id="noConfig" hidden>This copy of Codedrop isn’t connected to storage yet. Whoever set it up needs to add the Supabase project URL and key at the top of <b>index.html</b> (see README.md).</p>
+
+  <!-- SEND -->
+  <section id="view-send" aria-label="Send a file" hidden>
+    <p class="lede">Turn a file into a 12-character code. Whoever opens this page and types the code gets the file on their phone. No account needed.</p>
+    <div id="sendForm">
+      <div class="picker">
+        <label class="btn quiet" for="file" tabindex="0" id="pickBtn">Choose a file</label>
+        <input id="file" type="file" class="vh">
+        <div class="fileinfo" id="fileInfo" hidden><strong id="fileName"></strong><small id="fileSize"></small></div>
+      </div>
+      <label class="field">Code stops working after
+        <select id="ttl">
+          <option value="3600000">1 hour</option>
+          <option value="86400000" selected>1 day</option>
+          <option value="604800000">7 days</option>
+        </select>
+      </label>
+      <button class="btn" id="createBtn" disabled>Create code</button>
+      <p class="status" id="sendStatus" aria-live="polite"></p>
+      <div class="meter" id="sendMeter" hidden><i id="sendBar"></i></div>
+
+      <div class="codecard" id="codeCard" hidden>
+        <p class="sub" id="codeFor"></p>
+        <p class="code" id="codeText" aria-label="Code"></p>
+        <p class="sub" id="codeExp"></p>
+        <div class="row">
+          <button class="btn" id="copyBtn">Copy code</button>
+          <button class="btn quiet" id="shareBtn" hidden>Share</button>
+        </div>
+      </div>
+
+      <section id="mine" hidden aria-labelledby="mineH">
+        <h2 id="mineH">Codes made on this phone</h2>
+        <ul class="list" id="mineList"></ul>
+      </section>
+    </div>
+
+    <details>
+      <summary>How it works</summary>
+      <p>The file is encrypted on your phone with AES-256-GCM before it’s uploaded. The key is derived from the code (PBKDF2, 250,000 rounds) and the code is never uploaded, so the storage only holds scrambled data. The first four characters find the file; the last eight unlock it.</p>
+      <p>Files can be up to 25 MB. Share codes privately: anyone who has one can open the file until it expires. Expired files are cleared out automatically.</p>
+    </details>
+  </section>
+
+  <!-- RECEIVE -->
+  <section id="view-receive" aria-label="Receive a file" hidden>
+    <p class="lede">Type the code the sender gave you. The file is unlocked on this phone and downloaded to it.</p>
+    <label class="vh" for="codeIn">Code</label>
+    <input id="codeIn" class="codein" type="text" inputmode="text" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" maxlength="16" placeholder="XXXX XXXX XXXX">
+    <div class="row"><button class="btn grow" id="getBtn">Download file</button></div>
+    <p class="status" id="rxStatus" aria-live="polite"></p>
+    <div class="meter" id="rxMeter" hidden><i id="rxBar"></i></div>
+
+    <div class="result" id="result" hidden>
+      <h3>File received</h3>
+      <p class="nm" id="resName"></p>
+      <p class="meta" id="resMeta"></p>
+      <div class="preview" id="resPreview"></div>
+      <div class="row">
+        <button class="btn grow" id="saveBtn">Save again</button>
+        <button class="btn quiet" id="openBtn" hidden>Open in…</button>
+        <button class="btn quiet" id="againBtn">Enter another code</button>
+      </div>
+    </div>
+  </section>
+</div>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script>
+'use strict';
+// ====== SETUP: paste your Supabase project URL and publishable (or anon) key here ======
+// Both are meant to be public. NEVER paste the secret or service_role key into this file.
+const CONFIG = {
+  url: 'https://jtpmnvnldeltbhsjgagf.supabase.co',
+  key: 'sb_publishable_cZOiRU5HRiVU3xdKW9SIRg_qKsq2hgz',
+};
+// =======================================================================================
+const BUCKET = 'codedrop';
+const ITERS = 250000;
+const MAX_FILE = 25 * 1048576;
+const ALPH = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'; // Crockford base32: no I, L, O or U
+const $ = (id) => document.getElementById(id);
+const configured = !/YOUR-/.test(CONFIG.url + CONFIG.key) && /^https:\/\//.test(CONFIG.url);
+const BASE = CONFIG.url.replace(/\/+$/, '');
+const fmtBytes = (n) => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(n < 10240 ? 1 : 0)} KB` : `${(n / 1048576).toFixed(1)} MB`;
+const fmtCode = (c) => (c.match(/.{1,4}/g) || []).join(' ');
+function relTime(ms) {
+  const d = Math.abs(ms - Date.now()), past = ms < Date.now();
+  const v = d < 3600000 ? `${Math.max(1, Math.round(d / 60000))} min` : d < 172800000 ? `${Math.round(d / 3600000)} h` : `${Math.round(d / 86400000)} days`;
+  return past ? `${v} ago` : `in ${v}`;
+}
+let toastTimer;
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 3500); }
+function status(el, msg, isErr) { const s = $(el); s.textContent = msg || ''; s.classList.toggle('err', !!isErr); }
+function meter(id, frac) { const m = $(id + 'Meter'); if (frac == null) { m.hidden = true; return; } m.hidden = false; $(id + 'Bar').style.width = `${Math.round(Math.min(1, frac) * 100)}%`; }
+function withTimeout(p, ms = 30000) { return Promise.race([p, new Promise((_, rej) => setTimeout(() => rej({ code: 'timeout' }), ms))]); }
+
+// ---------- codes & crypto ----------
+function randCode(n) { return Array.from(crypto.getRandomValues(new Uint8Array(n)), (x) => ALPH[x & 31]).join(''); }
+const randHex = (n) => Array.from(crypto.getRandomValues(new Uint8Array(n)), (b) => b.toString(16).padStart(2, '0')).join('');
+function normalizeCode(s) { return s.toUpperCase().replace(/O/g, '0').replace(/[IL]/g, '1').replace(/U/g, 'V').replace(/[^0-9A-Z]/g, ''); }
+const aad = (lookup) => new TextEncoder().encode(`codedrop-v1:${lookup}`);
+async function deriveKey(code, salt, iters) {
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(code), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: iters, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+function b64(u8) { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); }
+function unb64(str) { const bin = atob(str); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i); return u8; }
+function blobToDataURL(blob) { return new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(blob); }); }
+function buildPayload(bytes, name, mime) {
+  const enc = new TextEncoder(); const nb = enc.encode(name).slice(0, 1000), mb = enc.encode(mime || 'application/octet-stream').slice(0, 200);
+  const out = new Uint8Array(4 + nb.length + mb.length + bytes.length); const dv = new DataView(out.buffer); let o = 0;
+  dv.setUint16(o, nb.length); o += 2; out.set(nb, o); o += nb.length; dv.setUint16(o, mb.length); o += 2; out.set(mb, o); o += mb.length; out.set(bytes, o);
+  return out;
+}
+function parsePayload(p) {
+  const dv = new DataView(p.buffer, p.byteOffset, p.byteLength), dec = new TextDecoder(); let o = 0;
+  const nl = dv.getUint16(o); o += 2; const name = dec.decode(p.subarray(o, o + nl)); o += nl;
+  const ml = dv.getUint16(o); o += 2; const mime = dec.decode(p.subarray(o, o + ml)); o += ml;
+  return { name, mime, bytes: p.subarray(o) };
+}
+
+// ---------- Supabase (plain HTTP, no library) ----------
+const hdr = (extra) => Object.assign({ apikey: CONFIG.key, Authorization: `Bearer ${CONFIG.key}` }, extra || {});
+async function sb(path, opts = {}) {
+  let res;
+  try { res = await withTimeout(fetch(BASE + path, opts)); } catch (e) { throw e && e.code ? e : { code: 'network' }; }
+  return res;
+}
+async function sbError(res) {
+  let msg = ''; try { const j = await res.json(); msg = j.message || j.error || j.msg || ''; } catch (e) {}
+  return { code: `http_${res.status}`, status: res.status, message: String(msg) };
+}
+async function getShare(id) {
+  const res = await sb(`/rest/v1/shares?id=eq.${id}&select=*`, { headers: hdr() });
+  if (!res.ok) throw await sbError(res);
+  const rows = await res.json(); return rows[0] || null;
+}
+async function insertShare(row) {
+  const res = await sb('/rest/v1/shares', { method: 'POST', headers: hdr({ 'Content-Type': 'application/json', Prefer: 'return=minimal' }), body: JSON.stringify(row) });
+  if (res.status === 409) return false;
+  if (!res.ok) throw await sbError(res);
+  return true;
+}
+function uploadObject(path, bytes, onProgress) {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open('POST', `${BASE}/storage/v1/object/${BUCKET}/${path}`);
+    const h = hdr({ 'Content-Type': 'application/octet-stream', 'x-upsert': 'false' });
+    for (const k in h) x.setRequestHeader(k, h[k]);
+    x.timeout = 10 * 60 * 1000;
+    x.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+    x.onload = () => {
+      if (x.status >= 200 && x.status < 300) return resolve();
+      let msg = ''; try { const j = JSON.parse(x.responseText); msg = j.message || j.error || ''; } catch (e) {}
+      reject({ code: `http_${x.status}`, status: x.status, message: String(msg) });
+    };
+    x.onerror = () => reject({ code: 'network' });
+    x.ontimeout = () => reject({ code: 'timeout' });
+    x.send(bytes);
+  });
+}
+async function downloadObject(path, expected, onProgress) {
+  const res = await sb(`/storage/v1/object/public/${BUCKET}/${path}`);
+  if (!res.ok) throw res.status === 404 || res.status === 400 ? { friendly: 'The file behind this code has been cleared out. Ask the sender for a new code.' } : await sbError(res);
+  const total = Number(res.headers.get('content-length')) || expected || 0;
+  if (!res.body || !res.body.getReader || !total) return new Uint8Array(await res.arrayBuffer());
+  const reader = res.body.getReader(), parts = []; let got = 0;
+  for (;;) { const { done, value } = await reader.read(); if (done) break; parts.push(value); got += value.length; onProgress(got / total); }
+  const out = new Uint8Array(got); let o = 0; for (const p of parts) { out.set(p, o); o += p.length; }
+  return out;
+}
+// Opportunistic clean-up: the database rules only allow deleting codes that have expired.
+async function cleanupExpired() {
+  try {
+    const now = encodeURIComponent(new Date().toISOString());
+    const res = await sb(`/rest/v1/shares?expires_at=lt.${now}&select=id,path&limit=30`, { headers: hdr() });
+    if (!res.ok) return; const rows = await res.json(); if (!rows.length) return;
+    await sb(`/storage/v1/object/${BUCKET}`, { method: 'DELETE', headers: hdr({ 'Content-Type': 'application/json' }), body: JSON.stringify({ prefixes: rows.map((r) => r.path) }) });
+    await sb(`/rest/v1/shares?id=in.(${rows.map((r) => r.id).join(',')})`, { method: 'DELETE', headers: hdr() });
+  } catch (e) { /* best effort */ }
+}
+function friendly(e) {
+  if (e && e.friendly) return e.friendly;
+  const s = e && e.status, m = (e && e.message || '').toLowerCase();
+  if (e && (e.code === 'network' || e.code === 'timeout')) return 'Couldn’t reach the storage. Check your internet connection. If nobody has used Codedrop for a week, its owner needs to restore the project in Supabase.';
+  if (s === 413 || /maximum allowed size|too large/.test(m)) return 'That file is too big. The limit is 25 MB.';
+  if (s === 401 || s === 403 || /row-level security|unauthorized|invalid api key|jwt/.test(m)) return 'The storage refused the request. The page’s key may be wrong, or setup.sql wasn’t run.';
+  if (s === 404 && /relation|shares/.test(m)) return 'The storage isn’t set up yet: run setup.sql in the Supabase project.';
+  if (s === 429) return 'Too many requests. Wait a minute and try again.';
+  if (s >= 500) return 'The storage is having trouble. Try again in a minute.';
+  return `Something went wrong${e && e.code ? ` (${e.code})` : ''}. Try again.`;
+}
+
+// ---------- send ----------
+const S = { file: null, busy: false, last: null };
+$('file').addEventListener('change', (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  const reject = (msg) => { S.file = null; e.target.value = ''; $('fileInfo').hidden = true; $('pickBtn').textContent = 'Choose a file'; $('createBtn').disabled = true; $('codeCard').hidden = true; status('sendStatus', msg, true); };
+  if (f.size === 0) return reject('That file is empty.');
+  if (f.size > MAX_FILE) return reject(`That file is ${fmtBytes(f.size)}. The limit is 25 MB.`);
+  S.file = f; $('fileName').textContent = f.name; $('fileSize').textContent = fmtBytes(f.size); $('fileInfo').hidden = false;
+  $('pickBtn').textContent = 'Change file'; status('sendStatus', ''); $('codeCard').hidden = true; $('createBtn').disabled = !configured;
+});
+$('pickBtn').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('file').click(); } });
+async function createCode() {
+  if (!S.file || S.busy || !configured) return;
+  S.busy = true; $('createBtn').disabled = true; $('codeCard').hidden = true;
+  try {
+    status('sendStatus', 'Encrypting on this phone…'); meter('send', 0.03);
+    const payload = buildPayload(new Uint8Array(await S.file.arrayBuffer()), S.file.name, S.file.type);
+    const ttl = Number($('ttl').value);
+    let done = null;
+    for (let attempt = 0; attempt < 4 && !done; attempt++) {
+      let lookup = null;
+      for (let i = 0; i < 6 && !lookup; i++) { const c = randCode(4); if (!(await getShare(c))) lookup = c; }
+      if (!lookup) throw { friendly: 'Couldn’t find a free code. Try again.' };
+      const code = lookup + randCode(8);
+      const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
+      status('sendStatus', 'Encrypting on this phone…');
+      const key = await deriveKey(code, salt, ITERS);
+      const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: aad(lookup) }, key, payload));
+      const path = `v1/${new Date().toISOString().slice(0, 10)}/${lookup}-${randHex(8)}.bin`;
+      status('sendStatus', 'Uploading…');
+      await uploadObject(path, ct, (f) => meter('send', 0.05 + 0.85 * f));
+      status('sendStatus', 'Saving the code…'); meter('send', 0.95);
+      const exp = Date.now() + ttl;
+      if (await insertShare({ id: lookup, path, salt: b64(salt), iv: b64(iv), iters: ITERS, bytes: ct.length, expires_at: new Date(exp).toISOString() })) done = { code, exp };
+    }
+    if (!done) throw { friendly: 'Couldn’t save a code. Try again.' };
+    meter('send', 1); status('sendStatus', '');
+    S.last = { code: done.code, exp: done.exp, name: S.file.name };
+    remember(S.last); showCode(); setTimeout(() => meter('send', null), 400);
+    cleanupExpired();
+  } catch (e) { meter('send', null); status('sendStatus', friendly(e), true); }
+  S.busy = false; $('createBtn').disabled = !S.file || !configured;
+}
+function showCode() {
+  const { code, exp, name } = S.last;
+  $('codeFor').textContent = `Code for ${name}`;
+  $('codeText').replaceChildren(...code.match(/.{4}/g).map((g) => { const s = document.createElement('span'); s.textContent = g; return s; }));
+  $('codeExp').textContent = `Works until ${new Date(exp).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}. Share it privately.`;
+  $('shareBtn').hidden = !navigator.share;
+  $('codeCard').hidden = false; $('codeCard').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); toast('Copied'); return; } catch (e) {}
+  const r = document.createRange(); r.selectNodeContents($('codeText')); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+  toast('The code is selected: copy it from the menu.');
+}
+$('createBtn').addEventListener('click', createCode);
+$('copyBtn').addEventListener('click', () => S.last && copyText(fmtCode(S.last.code)));
+$('shareBtn').addEventListener('click', async () => {
+  if (!S.last) return;
+  try { await navigator.share({ text: `Codedrop code for ${S.last.name}: ${fmtCode(S.last.code)}\n${location.origin}${location.pathname}#receive` }); }
+  catch (e) { if (e && e.name !== 'AbortError') copyText(fmtCode(S.last.code)); }
+});
+
+// Codes made on this phone (kept only in this browser)
+const STORE = 'codedrop.codes.v1';
+function loadMine() { try { return JSON.parse(localStorage.getItem(STORE) || '[]'); } catch (e) { return []; } }
+function saveMine(list) { try { localStorage.setItem(STORE, JSON.stringify(list.slice(0, 30))); } catch (e) {} }
+function remember(item) { saveMine([item, ...loadMine().filter((x) => x.code !== item.code)]); renderMine(); }
+function renderMine() {
+  const list = loadMine().filter((x) => x.exp > Date.now() - 7 * 86400000);
+  const ul = $('mineList'); ul.replaceChildren();
+  for (const it of list) {
+    const li = document.createElement('li'), isExp = it.exp < Date.now();
+    const nm = document.createElement('div'); nm.className = 'nm'; nm.textContent = it.name;
+    const meta = document.createElement('div'); meta.className = `meta${isExp ? ' expired' : ''}`; meta.textContent = `${fmtCode(it.code)}   ${isExp ? 'expired' : 'expires'} ${relTime(it.exp)}`;
+    const acts = document.createElement('div'); acts.className = 'acts';
+    if (!isExp) { const c = document.createElement('button'); c.className = 'btn quiet small'; c.textContent = 'Copy'; c.onclick = () => { S.last = it; copyText(fmtCode(it.code)); }; acts.append(c); }
+    const d = document.createElement('button'); d.className = 'btn quiet small'; d.textContent = 'Remove'; d.title = 'Remove from this list';
+    d.onclick = () => { saveMine(loadMine().filter((x) => x.code !== it.code)); renderMine(); };
+    acts.append(d); li.append(nm, acts, meta); ul.append(li);
+  }
+  $('mine').hidden = list.length === 0;
+}
+setInterval(() => { if (!$('view-send').hidden) renderMine(); }, 60000);
+
+// ---------- receive ----------
+const R = { busy: false, file: null, mime: '' };
+$('codeIn').addEventListener('input', (e) => { const f = fmtCode(normalizeCode(e.target.value).slice(0, 12)); if (e.target.value !== f) e.target.value = f; });
+$('codeIn').addEventListener('keydown', (e) => { if (e.key === 'Enter') receive(); });
+async function receive() {
+  if (R.busy) return;
+  if (!configured) { status('rxStatus', 'This copy of Codedrop isn’t connected to storage yet.', true); return; }
+  const code = normalizeCode($('codeIn').value);
+  if (code.length !== 12) { status('rxStatus', `Codes have 12 characters. You’ve typed ${code.length}.`, true); return; }
+  R.busy = true; $('getBtn').disabled = true; $('result').hidden = true;
+  try {
+    const lookup = code.slice(0, 4);
+    status('rxStatus', 'Finding the file…'); meter('rx', 0.03);
+    const row = await getShare(lookup);
+    if (!row) throw { friendly: 'No file matches this code. Check it, or ask the sender for a new one.' };
+    const exp = Date.parse(row.expires_at);
+    if (!(exp > Date.now())) throw { friendly: `This code stopped working ${relTime(exp)}. Ask the sender for a new one.` };
+    status('rxStatus', 'Downloading…');
+    const ct = await downloadObject(row.path, row.bytes, (f) => meter('rx', 0.05 + 0.85 * f));
+    status('rxStatus', 'Unlocking…'); meter('rx', 0.93);
+    const key = await deriveKey(code, unb64(row.salt), row.iters || ITERS);
+    let plain;
+    try { plain = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(row.iv), additionalData: aad(lookup) }, key, ct)); }
+    catch (e) { throw { friendly: 'This code doesn’t unlock the file. Check the last eight characters.' }; }
+    const p = parsePayload(plain);
+    R.mime = p.mime || 'application/octet-stream';
+    R.file = new File([p.bytes], p.name || 'file', { type: R.mime });
+    meter('rx', 1); status('rxStatus', '');
+    await showResult(); setTimeout(() => meter('rx', null), 400);
+    saveFile();
+    status('rxStatus', `Downloaded ${R.file.name}. Check your downloads.`);
+  } catch (e) { meter('rx', null); status('rxStatus', friendly(e), true); }
+  R.busy = false; $('getBtn').disabled = false;
+}
+async function showResult() {
+  $('resName').textContent = R.file.name; $('resMeta').textContent = `${fmtBytes(R.file.size)}, decrypted and verified on this phone`;
+  $('openBtn').hidden = !(navigator.canShare && navigator.canShare({ files: [R.file] }));
+  const pv = $('resPreview'); pv.replaceChildren();
+  try {
+    if ((R.mime.startsWith('image/') || R.mime.startsWith('video/')) && R.file.size < 30 * 1048576) {
+      const el = document.createElement(R.mime.startsWith('image/') ? 'img' : 'video');
+      if (el.tagName === 'IMG') el.alt = `Preview of ${R.file.name}`; else { el.controls = true; el.playsInline = true; }
+      el.onerror = () => el.remove(); el.src = await blobToDataURL(R.file); pv.append(el);
+    } else if (R.mime.startsWith('text/') || R.mime.includes('json')) {
+      const pre = document.createElement('pre'); pre.textContent = (await R.file.slice(0, 4000).text()) + (R.file.size > 4000 ? '\n…' : ''); pv.append(pre);
+    }
+  } catch (e) {}
+  $('result').hidden = false;
+}
+function saveFile() {
+  if (!R.file) return;
+  const a = document.createElement('a'); a.href = URL.createObjectURL(R.file); a.download = R.file.name;
+  document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+}
+$('getBtn').addEventListener('click', receive);
+$('saveBtn').addEventListener('click', saveFile);
+$('openBtn').addEventListener('click', async () => { try { await navigator.share({ files: [R.file] }); } catch (e) {} });
+$('againBtn').addEventListener('click', () => { R.file = null; $('result').hidden = true; $('codeIn').value = ''; status('rxStatus', ''); $('codeIn').focus(); });
+
+// ---------- routing ----------
+function route() {
+  const v = location.hash.slice(1) === 'receive' ? 'receive' : 'send';
+  $('view-send').hidden = v !== 'send'; $('view-receive').hidden = v !== 'receive';
+  for (const a of document.querySelectorAll('.modes a')) { if (a.dataset.view === v) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); }
+  if (v === 'send') renderMine();
+}
+$('noConfig').hidden = configured;
+window.addEventListener('hashchange', route);
+route();
+</script>
+</body>
+</html>
