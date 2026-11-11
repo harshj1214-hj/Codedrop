@@ -106,6 +106,21 @@ details p{color:var(--ink-2);max-width:62ch}
 .meter-head{display:flex;justify-content:space-between;font-size:14px;color:var(--ink-2);margin:10px 0 0}
 .meter-head b{color:var(--ink);font-weight:640;font-variant-numeric:tabular-nums}
 .meter.col i{background:var(--ink-2)}
+.sendprog{margin:10px 0 2px}
+.sendprog .meter-head{margin-top:0}
+.stagewrap:fullscreen{background:#FFFFFF;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:16px}
+.stagewrap:-webkit-full-screen{background:#FFFFFF;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:16px}
+.stagewrap:fullscreen .stage{flex:1;width:100%;aspect-ratio:auto;border-radius:0;box-shadow:none;margin:0}
+.stagewrap:-webkit-full-screen .stage{flex:1;width:100%;border-radius:0;box-shadow:none;margin:0}
+.stagewrap:fullscreen .sendprog,.stagewrap:-webkit-full-screen .sendprog{width:min(92vw,520px);margin:0}
+.stagewrap:fullscreen .sendprog *,.stagewrap:-webkit-full-screen .sendprog *{color:#13233A}
+.stagewrap:fullscreen .meter,.stagewrap:-webkit-full-screen .meter{background:#D5DDE6}
+.stagewrap:fullscreen .meter i,.stagewrap:-webkit-full-screen .meter i{background:#A8670F}
+.scanner .scanprog{position:absolute;left:12px;right:12px;top:12px;display:flex;align-items:center;gap:10px}
+.scanner .scanbar{flex:1;height:8px;background:rgba(230,236,244,.28);border-radius:4px;overflow:hidden}
+.scanner .scanbar i{display:block;height:100%;width:0;background:#F2B544;border-radius:4px;transition:width .2s linear}
+.scanner .scanprog b{color:#E6ECF4;font-size:15px;font-weight:700;font-variant-numeric:tabular-nums;text-shadow:0 1px 3px #000;min-width:3em;text-align:right}
+@media (prefers-reduced-motion: reduce){.scanner .scanbar i{transition:none}}
 @media (prefers-reduced-motion: reduce){.stage{transition:none}}
 .vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 @media (prefers-reduced-motion: reduce){.meter i{transition:none}}
@@ -164,7 +179,14 @@ details p{color:var(--ink-2);max-width:62ch}
       <section class="beam" id="beam" hidden aria-labelledby="beamH">
         <h2 id="beamH">Send by QR animation</h2>
         <p class="sub">No internet needed. On the other phone, open Codedrop, tap Receive, then Scan QR, and point it at this screen until the file arrives.</p>
-        <div class="stage" id="stage"><canvas id="beamCanvas" role="img" aria-label="Animated QR code carrying the file"></canvas></div>
+        <div class="stagewrap" id="stageWrap">
+          <div class="stage" id="stage"><canvas id="beamCanvas" role="img" aria-label="Animated QR code carrying the file"></canvas></div>
+          <div class="sendprog" id="beamProg">
+            <div class="meter-head"><span>Frames sent</span><b id="beamProgPct">0%</b></div>
+            <div class="meter" role="progressbar" aria-label="Frames sent" aria-valuemin="0" aria-valuemax="100" id="beamProgBox"><i id="beamProgBar"></i></div>
+            <p class="beamstats" id="beamProgNote"></p>
+          </div>
+        </div>
         <div class="row">
           <button class="btn grow" id="beamStart">Start</button>
           <button class="btn quiet" id="beamFs">Full screen</button>
@@ -209,6 +231,10 @@ details p{color:var(--ink-2);max-width:62ch}
     <div class="scanner" id="scanner" hidden>
       <video id="scanVideo" playsinline muted autoplay aria-label="Camera view for scanning a QR code"></video>
       <div class="frame" aria-hidden="true"></div>
+      <div class="scanprog" id="scanProg" hidden>
+        <div class="scanbar" role="progressbar" aria-label="File received" aria-valuemin="0" aria-valuemax="100" id="scanBarBox"><i id="scanBar"></i></div>
+        <b id="scanPct">0%</b>
+      </div>
       <p class="hint" id="scanHint" aria-live="polite">Point at the sender’s QR code, still or moving</p>
     </div>
     <div class="rxbeam" id="rxBeam" hidden>
@@ -610,19 +636,29 @@ function beamDraw(count) { // scales it up to the screen in whole-pixel steps so
   if (beamCv.width !== px) { beamCv.width = px; beamCv.height = px; }
   beamCv.style.width = beamCv.style.height = `${px / dpr}px`;
   beamCtx.imageSmoothingEnabled = false; beamCtx.drawImage(beamOff, 0, 0, px, px);
-  if (count) { PS.shown++; const now = performance.now(); PS.times.push(now); while (PS.times.length && now - PS.times[0] > 1000) PS.times.shift(); }
+  if (count) { PS.shown++; const now = performance.now(); PS.times.push(now); while (PS.times.length && now - PS.times[0] > 1000) PS.times.shift(); beamProgress(); }
+}
+// This phone can't see the receiver (light only goes one way), so the bar measures frames sent
+// against the minimum a receiver needs if its camera catches every frame.
+function beamProgress() {
+  if (!PS.enc) return;
+  const need = Math.ceil(PS.enc.K * (PS.enc.K < 100 ? 1.5 : 1.2)), frac = Math.min(1, PS.shown / need), pct = Math.floor(frac * 100);
+  $('beamProgBar').style.width = `${(frac * 100).toFixed(1)}%`; $('beamProgPct').textContent = `${pct}%`; $('beamProgBox').setAttribute('aria-valuenow', String(pct));
+  $('beamProgNote').textContent = PS.shown === 0 ? `About ${need.toLocaleString()} frames to send. The other phone shows when the file is complete.`
+    : PS.shown < need ? `Sent ${PS.shown.toLocaleString()} of about ${need.toLocaleString()} frames, about ${fmtDur((need - PS.shown) / PS.fps)} to go.`
+    : 'Minimum sent. Keep going until the other phone shows the file: cameras miss a few frames.';
 }
 function beamStats() {
   if (!PS.enc) { $('beamStats').textContent = ''; return; }
   const now = performance.now(); while (PS.times.length && now - PS.times[0] > 1000) PS.times.shift();
   const best = PS.enc.K * (PS.enc.K < 100 ? 1.5 : 1.2) / PS.fps;
-  $('beamStats').textContent = `${PS.running ? `Showing frame ${PS.shown.toLocaleString()} at ${PS.times.length} fps. ` : ''}QR version ${(PS.n - 17) / 4}, ${PS.enc.K.toLocaleString()} blocks of ${PS.B} bytes. Best case about ${fmtDur(best)} if the camera catches every frame.`;
+  $('beamStats').textContent = `${PS.running ? `Playing at ${PS.times.length} frames per second. ` : ''}QR version ${(PS.n - 17) / 4}, ${PS.enc.K.toLocaleString()} blocks of ${PS.B} bytes, best case about ${fmtDur(best)}.`;
 }
 function beamBuild() {
   if (!PS.payload) return false;
   PS.enc = new Encoder(PS.payload, PS.B, crypto.getRandomValues(new Uint32Array(1))[0]); PS.seed = 0; PS.shown = 0; PS.times = [];
   try { beamPrepare(); } catch (e) { toast('That density is too high for one QR code. Pick a lower one.'); return false; }
-  beamDraw(false); beamStats(); return true;
+  beamDraw(false); beamStats(); beamProgress(); return true;
 }
 async function openBeam() {
   if (!S.file) return;
@@ -661,7 +697,7 @@ $('beamDensity').addEventListener('change', (e) => {
 });
 $('beamFps').addEventListener('change', (e) => { PS.fps = +e.target.value; beamStats(); });
 $('beamFs').addEventListener('click', async () => {
-  const st = $('stage'), req = st.requestFullscreen || st.webkitRequestFullscreen;
+  const st = $('stageWrap'), req = st.requestFullscreen || st.webkitRequestFullscreen;
   if (!req) { toast('Full screen isn’t available here. Turn the brightness up instead.'); return; }
   try { await req.call(st); } catch (e) { toast('Full screen isn’t available here. Turn the brightness up instead.'); }
 });
@@ -777,6 +813,7 @@ async function startScan() {
   const v = $('scanVideo'); v.srcObject = SC.stream; try { await v.play(); } catch (e) {}
   SC.running = true; $('scanner').hidden = false; $('result').hidden = true; $('scanBtn').textContent = 'Stop camera';
   if (PR.dec && PR.dec.done) { PR.dec = null; $('rxBeam').hidden = true; }
+  if (PR.dec) renderBeamRx(); else $('scanProg').hidden = true;
   $('scanHint').textContent = PR.dec ? 'Collecting again. Earlier frames still count.' : 'Point at the sender’s QR code, still or moving';
   status('rxStatus', ''); keepAwake();
   try { $('scanner').scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) {}
@@ -837,15 +874,24 @@ function handleBeam(text) {
   if (!PR.dec || PR.dec.fileId !== f.fileId) {
     const restarted = !!PR.dec;
     PR.dec = new Decoder(f.fileId, f.L, f.B); PR.t0 = performance.now(); PR.ok = [];
-    $('rxBeam').hidden = false; $('result').hidden = true;
+    $('rxBeam').hidden = false; $('result').hidden = true; renderBeamRx();
     $('scanHint').textContent = restarted ? 'The sender changed settings. Collecting again.' : `Receiving about ${fmtBytes(f.L)}. Keep both phones steady.`;
   }
   if (PR.dec.add(f.seed, f.data)) PR.ok.push(performance.now());
   if (PR.dec.done) beamFinish();
   return true;
 }
+// One number for the viewfinder: decoded blocks, or frames collected against the expected need,
+// whichever is further along. It never goes backwards and only shows 100% when the file is complete.
+function beamOverall(d) {
+  if (d.done) return 1;
+  return Math.max(d.known / d.K, Math.min(0.97, d.unique / (d.K * (d.K < 100 ? 1.5 : 1.2))));
+}
 function renderBeamRx() {
   const d = PR.dec; if (!d) return; PR.lastRender = performance.now();
+  const all = beamOverall(d), allPct = Math.floor(all * 100);
+  $('scanProg').hidden = false; $('scanBar').style.width = `${(all * 100).toFixed(1)}%`;
+  $('scanPct').textContent = `${allPct}%`; $('scanBarBox').setAttribute('aria-valuenow', String(allPct));
   const col = Math.min(1, d.unique / d.K), dec = d.known / d.K;
   $('bCol').style.width = `${(col * 100).toFixed(1)}%`; $('bColL').textContent = `${Math.floor(col * 100)}%`;
   $('bDec').style.width = `${(dec * 100).toFixed(1)}%`; $('bDecL').textContent = `${Math.floor(dec * 100)}%`;
@@ -874,7 +920,7 @@ document.addEventListener('visibilitychange', () => {
 $('getBtn').addEventListener('click', receive);
 $('saveBtn').addEventListener('click', saveFile);
 $('openBtn').addEventListener('click', async () => { try { await navigator.share({ files: [R.file] }); } catch (e) {} });
-$('againBtn').addEventListener('click', () => { R.file = null; PR.dec = null; $('rxBeam').hidden = true; $('result').hidden = true; $('codeIn').value = ''; status('rxStatus', ''); $('codeIn').focus(); });
+$('againBtn').addEventListener('click', () => { R.file = null; PR.dec = null; $('rxBeam').hidden = true; $('scanProg').hidden = true; $('result').hidden = true; $('codeIn').value = ''; status('rxStatus', ''); $('codeIn').focus(); });
 
 // ---------- routing ----------
 function route() {
