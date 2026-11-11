@@ -83,6 +83,14 @@ details{border-top:1px solid var(--line);padding-top:12px;margin-top:22px}
 summary{cursor:pointer;font-weight:650}
 details p{color:var(--ink-2);max-width:62ch}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));max-width:min(92vw,440px);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:10px;font-size:15px;z-index:20}
+.qrwrap{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin:10px 0 6px}
+.qrbox{background:#FFFFFF;border-radius:8px;padding:6px;line-height:0;flex:none;box-shadow:0 0 0 1px var(--line)}
+.qrbox canvas{width:172px;height:172px;image-rendering:pixelated;display:block}
+.qrnote{flex:1;min-width:150px;color:var(--ink-2);font-size:15px;margin:0}
+.scanner{position:relative;width:100%;aspect-ratio:1/1;background:#05090F;border-radius:10px;overflow:hidden;margin:2px 0 4px}
+.scanner video{width:100%;height:100%;object-fit:cover;display:block}
+.scanner .frame{position:absolute;inset:17%;border:3px solid #F2B544;border-radius:14px;box-shadow:0 0 0 999px rgba(5,9,15,.38);pointer-events:none}
+.scanner .hint{position:absolute;left:12px;right:12px;bottom:12px;margin:0;text-align:center;color:#E6ECF4;font-size:15px;text-shadow:0 1px 3px #000}
 .vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 @media (prefers-reduced-motion: reduce){.meter i{transition:none}}
 </style>
@@ -122,9 +130,14 @@ details p{color:var(--ink-2);max-width:62ch}
       <div class="codecard" id="codeCard" hidden>
         <p class="sub" id="codeFor"></p>
         <p class="code" id="codeText" aria-label="Code"></p>
+        <div class="qrwrap" id="qrWrap" hidden>
+          <div class="qrbox"><canvas id="qrCanvas" role="img" aria-label="QR code that opens this file on another phone"></canvas></div>
+          <p class="qrnote">Or scan this with the other phone’s camera. It opens Codedrop and downloads the file, nothing to type.</p>
+        </div>
         <p class="sub" id="codeExp"></p>
         <div class="row">
           <button class="btn" id="copyBtn">Copy code</button>
+          <button class="btn quiet" id="linkBtn">Copy link</button>
           <button class="btn quiet" id="shareBtn" hidden>Share</button>
         </div>
       </div>
@@ -138,16 +151,21 @@ details p{color:var(--ink-2);max-width:62ch}
     <details>
       <summary>How it works</summary>
       <p>The file is encrypted on your phone with AES-256-GCM before it’s uploaded. The key is derived from the code (PBKDF2, 250,000 rounds) and the code is never uploaded, so the storage only holds scrambled data. The first four characters find the file; the last eight unlock it.</p>
-      <p>Files can be up to 25 MB. Share codes privately: anyone who has one can open the file until it expires. Expired files are cleared out automatically.</p>
+      <p>The QR code and the link carry the same code, so treat them like the code itself. Files can be up to 25 MB. Share codes privately: anyone who has one can open the file until it expires. Expired files are cleared out automatically.</p>
     </details>
   </section>
 
   <!-- RECEIVE -->
   <section id="view-receive" aria-label="Receive a file" hidden>
-    <p class="lede">Type the code the sender gave you. The file is unlocked on this phone and downloaded to it.</p>
+    <p class="lede">Type the code the sender gave you, or scan their QR code. The file is unlocked on this phone and downloaded to it.</p>
     <label class="vh" for="codeIn">Code</label>
     <input id="codeIn" class="codein" type="text" inputmode="text" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" maxlength="16" placeholder="XXXX XXXX XXXX">
-    <div class="row"><button class="btn grow" id="getBtn">Download file</button></div>
+    <div class="row"><button class="btn grow" id="getBtn">Download file</button><button class="btn quiet" id="scanBtn">Scan QR</button></div>
+    <div class="scanner" id="scanner" hidden>
+      <video id="scanVideo" playsinline muted autoplay aria-label="Camera view for scanning a QR code"></video>
+      <div class="frame" aria-hidden="true"></div>
+      <p class="hint" id="scanHint" aria-live="polite">Point at the QR code on the sender’s screen</p>
+    </div>
     <p class="status" id="rxStatus" aria-live="polite"></p>
     <div class="meter" id="rxMeter" hidden><i id="rxBar"></i></div>
 
@@ -157,7 +175,7 @@ details p{color:var(--ink-2);max-width:62ch}
       <p class="meta" id="resMeta"></p>
       <div class="preview" id="resPreview"></div>
       <div class="row">
-        <button class="btn grow" id="saveBtn">Save again</button>
+        <button class="btn grow" id="saveBtn">Save file</button>
         <button class="btn quiet" id="openBtn" hidden>Open in…</button>
         <button class="btn quiet" id="againBtn">Enter another code</button>
       </div>
@@ -166,6 +184,8 @@ details p{color:var(--ink-2);max-width:62ch}
 </div>
 <div class="toast" id="toast" role="status" hidden></div>
 
+<script async src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+<script async src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <script>
 'use strict';
 // ====== SETUP: paste your Supabase project URL and publishable (or anon) key here ======
@@ -341,18 +361,36 @@ function showCode() {
   $('codeText').replaceChildren(...code.match(/.{4}/g).map((g) => { const s = document.createElement('span'); s.textContent = g; return s; }));
   $('codeExp').textContent = `Works until ${new Date(exp).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}. Share it privately.`;
   $('shareBtn').hidden = !navigator.share;
+  renderQR(receiveLink(code));
   $('codeCard').hidden = false; $('codeCard').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
-async function copyText(text) {
-  try { await navigator.clipboard.writeText(text); toast('Copied'); return; } catch (e) {}
-  const r = document.createRange(); r.selectNodeContents($('codeText')); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
-  toast('The code is selected: copy it from the menu.');
+// A link that opens this page on the Receive tab and starts the download. The code sits after #,
+// which browsers never send to the web server.
+const receiveLink = (code) => `${location.origin}${location.pathname}#r=${code}`;
+function renderQR(text) {
+  const wrap = $('qrWrap');
+  if (typeof window.qrcode !== 'function') { wrap.hidden = true; return; }
+  try {
+    const qr = window.qrcode(0, 'M'); qr.addData(text); qr.make();
+    const n = qr.getModuleCount(), q = 4, size = n + 2 * q, scale = Math.max(4, Math.ceil(344 / size));
+    const cv = $('qrCanvas'), ctx = cv.getContext('2d'); cv.width = cv.height = size * scale;
+    ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, cv.width, cv.height); ctx.fillStyle = '#000000';
+    for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.isDark(r, c)) ctx.fillRect((c + q) * scale, (r + q) * scale, scale, scale);
+    wrap.hidden = false;
+  } catch (e) { wrap.hidden = true; }
+}
+async function copyText(text, what = 'Code') {
+  try { await navigator.clipboard.writeText(text); toast(`${what} copied`); return; } catch (e) {}
+  const ta = document.createElement('textarea'); ta.value = text; ta.setAttribute('readonly', ''); ta.style.cssText = 'position:fixed;opacity:0';
+  document.body.append(ta); ta.select(); let ok = false; try { ok = document.execCommand('copy'); } catch (e) {} ta.remove();
+  toast(ok ? `${what} copied` : 'Copying is blocked in this browser. Press and hold the code to copy it.');
 }
 $('createBtn').addEventListener('click', createCode);
 $('copyBtn').addEventListener('click', () => S.last && copyText(fmtCode(S.last.code)));
+$('linkBtn').addEventListener('click', () => S.last && copyText(receiveLink(S.last.code), 'Link'));
 $('shareBtn').addEventListener('click', async () => {
   if (!S.last) return;
-  try { await navigator.share({ text: `Codedrop code for ${S.last.name}: ${fmtCode(S.last.code)}\n${location.origin}${location.pathname}#receive` }); }
+  try { await navigator.share({ title: 'Codedrop', text: `Codedrop code for ${S.last.name}: ${fmtCode(S.last.code)}`, url: receiveLink(S.last.code) }); }
   catch (e) { if (e && e.name !== 'AbortError') copyText(fmtCode(S.last.code)); }
 });
 
@@ -369,7 +407,7 @@ function renderMine() {
     const nm = document.createElement('div'); nm.className = 'nm'; nm.textContent = it.name;
     const meta = document.createElement('div'); meta.className = `meta${isExp ? ' expired' : ''}`; meta.textContent = `${fmtCode(it.code)}   ${isExp ? 'expired' : 'expires'} ${relTime(it.exp)}`;
     const acts = document.createElement('div'); acts.className = 'acts';
-    if (!isExp) { const c = document.createElement('button'); c.className = 'btn quiet small'; c.textContent = 'Copy'; c.onclick = () => { S.last = it; copyText(fmtCode(it.code)); }; acts.append(c); }
+    if (!isExp) { const c = document.createElement('button'); c.className = 'btn quiet small'; c.textContent = 'Show'; c.onclick = () => { S.last = it; showCode(); }; acts.append(c); }
     const d = document.createElement('button'); d.className = 'btn quiet small'; d.textContent = 'Remove'; d.title = 'Remove from this list';
     d.onclick = () => { saveMine(loadMine().filter((x) => x.code !== it.code)); renderMine(); };
     acts.append(d); li.append(nm, acts, meta); ul.append(li);
@@ -384,6 +422,7 @@ $('codeIn').addEventListener('input', (e) => { const f = fmtCode(normalizeCode(e
 $('codeIn').addEventListener('keydown', (e) => { if (e.key === 'Enter') receive(); });
 async function receive() {
   if (R.busy) return;
+  if (SC.running) stopScan();
   if (!configured) { status('rxStatus', 'This copy of Codedrop isn’t connected to storage yet.', true); return; }
   const code = normalizeCode($('codeIn').value);
   if (code.length !== 12) { status('rxStatus', `Codes have 12 characters. You’ve typed ${code.length}.`, true); return; }
@@ -408,7 +447,7 @@ async function receive() {
     meter('rx', 1); status('rxStatus', '');
     await showResult(); setTimeout(() => meter('rx', null), 400);
     saveFile();
-    status('rxStatus', `Downloaded ${R.file.name}. Check your downloads.`);
+    status('rxStatus', `Downloaded ${R.file.name}. If it didn’t start, tap Save file.`);
   } catch (e) { meter('rx', null); status('rxStatus', friendly(e), true); }
   R.busy = false; $('getBtn').disabled = false;
 }
@@ -432,6 +471,80 @@ function saveFile() {
   const a = document.createElement('a'); a.href = URL.createObjectURL(R.file); a.download = R.file.name;
   document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 60000);
 }
+// ---------- QR scanner ----------
+// Reads a bare code or a Codedrop link. The camera turns off the moment a valid code is read.
+const SC = { stream: null, running: false, detector: undefined, lastMiss: 0 };
+const scanCv = document.createElement('canvas');
+const scanCtx = scanCv.getContext('2d', { willReadFrequently: true });
+function codeFromText(text) {
+  const t = String(text || '').trim(), i = t.indexOf('#r=');
+  if (i < 0 && /[/:.]/.test(t)) return null; // some other link or text
+  const c = normalizeCode((i >= 0 ? t.slice(i + 3) : t).split(/[&#?]/)[0]);
+  return c.length === 12 ? c : null;
+}
+async function startScan() {
+  if (SC.running || R.busy) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.isSecureContext) { status('rxStatus', 'The camera only works on the https:// version of this page in a current browser. Type the code instead.', true); return; }
+  if (SC.detector === undefined) {
+    SC.detector = null;
+    if ('BarcodeDetector' in window) { try { const f = await window.BarcodeDetector.getSupportedFormats(); if (f.includes('qr_code')) SC.detector = new window.BarcodeDetector({ formats: ['qr_code'] }); } catch (e) {} }
+  }
+  if (!SC.detector && typeof window.jsQR !== 'function') { status('rxStatus', 'The QR scanner didn’t load. Check your connection and reload, or type the code instead.', true); return; }
+  status('rxStatus', 'Opening the camera…');
+  try { SC.stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } } }); }
+  catch (e) {
+    status('rxStatus', e.name === 'NotAllowedError' ? 'Camera access was blocked. Allow the camera for this site in your browser’s settings, or type the code instead.'
+      : e.name === 'NotFoundError' ? 'No camera was found. Type the code instead.' : `The camera couldn’t start (${e.name || 'error'}). Type the code instead.`, true);
+    return;
+  }
+  const v = $('scanVideo'); v.srcObject = SC.stream; try { await v.play(); } catch (e) {}
+  SC.running = true; $('scanner').hidden = false; $('result').hidden = true; $('scanBtn').textContent = 'Stop camera';
+  $('scanHint').textContent = 'Point at the QR code on the sender’s screen'; status('rxStatus', '');
+  try { $('scanner').scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) {}
+  scanFrame();
+}
+function stopScan() {
+  SC.running = false;
+  if (SC.stream) { SC.stream.getTracks().forEach((t) => t.stop()); SC.stream = null; }
+  $('scanVideo').srcObject = null; $('scanner').hidden = true; $('scanBtn').textContent = 'Scan QR';
+}
+function nextScan() {
+  if (!SC.running) return;
+  const v = $('scanVideo');
+  if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(() => scanFrame()); else requestAnimationFrame(() => scanFrame());
+}
+async function scanFrame() {
+  if (!SC.running) return;
+  const v = $('scanVideo'); let texts = [];
+  try {
+    if (v.readyState >= 2) {
+      if (SC.detector) { try { texts = (await SC.detector.detect(v)).map((b) => b.rawValue); } catch (e) { SC.detector = null; } }
+      else if (typeof window.jsQR === 'function') {
+        const vw = v.videoWidth, vh = v.videoHeight, side = Math.min(vw, vh);
+        if (side) {
+          const t = Math.min(side, 640);
+          if (scanCv.width !== t) { scanCv.width = t; scanCv.height = t; }
+          scanCtx.drawImage(v, (vw - side) / 2, (vh - side) / 2, side, side, 0, 0, t, t);
+          const res = window.jsQR(scanCtx.getImageData(0, 0, t, t).data, t, t, { inversionAttempts: 'dontInvert' });
+          if (res) texts = [res.data];
+        }
+      }
+    }
+  } catch (e) {}
+  if (!SC.running) return;
+  for (const t of texts) {
+    const code = codeFromText(t);
+    if (code) {
+      stopScan();
+      try { if (navigator.vibrate) navigator.vibrate(60); } catch (e) {}
+      $('codeIn').value = fmtCode(code); receive(); return;
+    }
+    if (Date.now() - SC.lastMiss > 2000) { SC.lastMiss = Date.now(); $('scanHint').textContent = 'That QR code isn’t from Codedrop'; }
+  }
+  nextScan();
+}
+$('scanBtn').addEventListener('click', () => SC.running ? stopScan() : startScan());
+document.addEventListener('visibilitychange', () => { if (document.hidden && SC.running) stopScan(); });
 $('getBtn').addEventListener('click', receive);
 $('saveBtn').addEventListener('click', saveFile);
 $('openBtn').addEventListener('click', async () => { try { await navigator.share({ files: [R.file] }); } catch (e) {} });
@@ -439,14 +552,24 @@ $('againBtn').addEventListener('click', () => { R.file = null; $('result').hidde
 
 // ---------- routing ----------
 function route() {
-  const v = location.hash.slice(1) === 'receive' ? 'receive' : 'send';
+  const h = location.hash.slice(1);
+  const v = h === 'receive' || h.startsWith('r=') ? 'receive' : 'send';
+  if (v !== 'receive' && SC.running) stopScan();
   $('view-send').hidden = v !== 'send'; $('view-receive').hidden = v !== 'receive';
   for (const a of document.querySelectorAll('.modes a')) { if (a.dataset.view === v) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); }
   if (v === 'send') renderMine();
 }
 $('noConfig').hidden = configured;
-window.addEventListener('hashchange', route);
-route();
+// Opening a link (or a QR) with #r=CODE fills the code and starts the download. The code is then
+// removed from the address bar so it doesn't linger on screen.
+function openLinked() {
+  let code = null;
+  if (location.hash.startsWith('#r=')) { code = codeFromText(location.hash); history.replaceState(null, '', `${location.pathname}${location.search}#receive`); }
+  route();
+  if (code) { $('codeIn').value = fmtCode(code); receive(); }
+}
+window.addEventListener('hashchange', openLinked);
+openLinked();
 </script>
 </body>
 </html>
